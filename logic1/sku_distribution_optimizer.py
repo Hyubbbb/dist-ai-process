@@ -346,8 +346,8 @@ def main():
     print(f"실행 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     try:
-        # # 1. 데이터 생성
-        # df_skus, df_stores, df_demand = create_dummy_data()
+        # 1. 데이터 생성
+        df_skus, df_stores, df_demand = create_dummy_data()
         
         # 2. 데이터 로드 및 전처리
         skus, stores, demand, C_color, S_size, r_color_min, r_color_max, r_size_min, r_size_max = load_data()

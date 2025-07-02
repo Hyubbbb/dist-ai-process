@@ -1,0 +1,46 @@
+# SKU Distribution Optimization System
+# Python 의존성 패키지 목록
+
+# 데이터 처리 및 분석
+pandas>=1.3.0
+numpy>=1.21.0
+
+# 최적화 라이브러리
+PuLP>=2.6.0
+
+# 시각화
+matplotlib>=3.5.0
+seaborn>=0.11.0
+plotly>=5.0.0
+
+# 설정 파일 처리
+PyYAML>=6.0
+
+# 엑셀 파일 처리
+openpyxl>=3.0.0
+xlsxwriter>=3.0.0
+
+# 로깅 및 유틸리티
+colorama>=0.4.0
+tqdm>=4.60.0
+
+# 과학 계산
+scipy>=1.7.0
+
+# 날짜/시간 처리
+python-dateutil>=2.8.0
+
+# 통계 분석
+scikit-learn>=1.0.0
+statsmodels>=0.13.0
+
+# 메모리 프로파일링 (선택사항)
+memory-profiler>=0.60.0
+psutil>=5.8.0
+
+# 병렬 처리 (선택사항)
+joblib>=1.1.0
+
+# 테스트 (개발용)
+pytest>=6.0.0
+pytest-cov>=3.0.0 

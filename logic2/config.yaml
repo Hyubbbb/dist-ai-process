@@ -1,0 +1,373 @@
+# SKU Distribution Optimization System 설정 파일
+
+# 기본 설정
+default:
+  output_directory: "../output"
+  log_level: "INFO"
+  solver_timeout: 300  # 초
+
+# 데이터 경로
+data_paths:
+  sku_file: "../data_real/발주수량.csv"
+  store_file: "../data_real/매장데이터.csv"
+
+# 실험 시나리오 설정
+scenarios:
+  # 기본 베이스라인 (수렴성 우선)
+  baseline:
+    description: "기본 수요 기반 분배 (기존 방식으로 테스트)"
+    coverage_weight: 0.0
+    balance_penalty: 0.0
+    allocation_penalty: 0.0
+    allocation_range_min: 0.1  # 0.3 → 0.1 (매우 관대하게)
+    allocation_range_max: 10.0  # 3.0 → 10.0 (매우 관대하게)
+    min_coverage_threshold: 0.0
+    
+    # 타임아웃 설정 추가
+    step1_timeout: 120  # Step1: 2분 (60초 → 120초로 증가)
+    step2_timeout: 600  # Step2: 10분 (300초 → 600초로 증가)
+    
+    # QTY_SUM 기반 비례 배분 파라미터 (비활성화로 기존 방식 테스트)
+    use_proportional_allocation: false  # true → false (비활성화)
+    min_allocation_multiplier: 0.01  # 기대값의 1% 이상
+    max_allocation_multiplier: 10.0  # 기대값의 1000% 이하
+    sku_distribution_penalty: 0.0   # 분산 페널티 비활성화
+    
+    # 기존 방식 백워드 호환성 (활성화)
+    max_sku_concentration: 0.8  # 0.95 → 0.8 (더 분산 지향)
+    
+    # 희소 SKU 특별 제약 (비활성화)
+    enforce_scarce_distribution: false
+    scarce_min_allocation_multiplier: 0.01
+    scarce_max_allocation_multiplier: 10.0
+    
+    # 매장 크기별 차등 제약 (비활성화)
+    apply_store_size_constraints: false
+    large_store_max_multiplier: 10.0
+    small_store_max_multiplier: 10.0
+    
+    # 최소 배분 보장 (비활성화)
+    min_allocation_per_store: 0  # 1 → 0 (비활성화)
+    min_stores_per_sku: 1        # 2 → 1 (최소한으로)
+
+  # 커버리지 중심 (관대한 설정)
+  coverage_focused:
+    description: "커버리지 최우선 (수렴성 고려)"
+    coverage_weight: 1.0
+    balance_penalty: 0.0
+    allocation_penalty: 0.0
+    allocation_range_min: 0.1   # 0.2 → 0.1
+    allocation_range_max: 10.0  # 5.0 → 10.0
+    min_coverage_threshold: 0.0
+    
+    # QTY_SUM 기반 비례 배분 파라미터 (관대한 설정)
+    use_proportional_allocation: true
+    min_allocation_multiplier: 0.05  # 더 넓은 범위 허용
+    max_allocation_multiplier: 5.0   # 더 넓은 범위 허용
+    sku_distribution_penalty: 0.1   # 낮은 페널티
+    
+    # 희소 SKU 특별 제약 (관대하게)
+    enforce_scarce_distribution: true
+    scarce_min_allocation_multiplier: 0.01
+    scarce_max_allocation_multiplier: 10.0
+    
+    # 매장 크기별 차등 제약 (관대하게)
+    apply_store_size_constraints: true
+    large_store_max_multiplier: 10.0
+    small_store_max_multiplier: 5.0
+    
+    # 최소 배분 보장 (완화)
+    min_allocation_per_store: 0  # 비활성화
+    min_stores_per_sku: 2
+
+  # 균형 중심 (제약 완화)
+  balance_focused:
+    description: "균형 최우선 (제약 완화)"
+    coverage_weight: 0.1
+    balance_penalty: 1.0
+    allocation_penalty: 2.0
+    allocation_range_min: 0.5   # 0.8 → 0.5
+    allocation_range_max: 2.0   # 1.2 → 2.0
+    min_coverage_threshold: 0.05  # 0.1 → 0.05
+    
+    # QTY_SUM 기반 비례 배분 파라미터 (완화된 균형)
+    use_proportional_allocation: true
+    min_allocation_multiplier: 0.3  # 엄격한 범위 → 완화
+    max_allocation_multiplier: 3.0  # 엄격한 범위 → 완화
+    sku_distribution_penalty: 0.5  # 1.5 → 0.5
+    
+    # 희소 SKU 특별 제약 (완화)
+    enforce_scarce_distribution: false  # true → false (비활성화)
+    scarce_min_allocation_multiplier: 0.1
+    scarce_max_allocation_multiplier: 5.0
+    
+    # 매장 크기별 차등 제약 (비활성화)
+    apply_store_size_constraints: false
+    large_store_max_multiplier: 3.0
+    small_store_max_multiplier: 2.0
+    
+    # 최소 배분 보장 (완화)
+    min_allocation_per_store: 0  # 1 → 0
+    min_stores_per_sku: 3       # 8 → 3
+
+  # 하이브리드 접근 (더 관대하게)
+  hybrid:
+    description: "균형잡힌 접근 (수렴성 고려)"
+    coverage_weight: 0.5
+    balance_penalty: 0.3
+    allocation_penalty: 0.1
+    allocation_range_min: 0.3   # 0.5 → 0.3
+    allocation_range_max: 3.0   # 2.0 → 3.0
+    min_coverage_threshold: 0.02  # 0.05 → 0.02
+    
+    # 타임아웃 설정 (비례 배분용 - 더 긴 시간)
+    step1_timeout: 180   # Step1: 3분 
+    step2_timeout: 1200  # Step2: 20분 (비례 배분은 시간이 오래 걸림)
+    
+    # QTY_SUM 기반 비례 배분 파라미터 (균형잡힌 설정)
+    use_proportional_allocation: true
+    min_allocation_multiplier: 0.01  
+    max_allocation_multiplier: 50.0  # 1.4 → 10.0
+    sku_distribution_penalty: 0.3  # 0.8 → 0.3
+    
+    # 희소 SKU 특별 제약 (관대하게)
+    enforce_scarce_distribution: false  # true → false
+    scarce_min_allocation_multiplier: 0.1
+    scarce_max_allocation_multiplier: 5.0
+    
+    # 매장 크기별 차등 제약 (관대하게)
+    apply_store_size_constraints: false  # true → false
+    large_store_max_multiplier: 3.0
+    small_store_max_multiplier: 2.0
+    
+    # 최소 배분 보장 (완화)
+    min_allocation_per_store: 0  # 1 → 0
+    min_stores_per_sku: 5       # 5 → 2
+
+  # 극단적 커버리지 (제약 대폭 완화)
+  extreme_coverage:
+    description: "극단적 커버리지 추구 (제약 완화)"
+    coverage_weight: 5.0
+    balance_penalty: 0.5   # 1.0 → 0.5
+    allocation_penalty: 0.05  # 0.1 → 0.05
+    allocation_range_min: 0.1   # 0.2 → 0.1
+    allocation_range_max: 20.0  # 5.0 → 20.0
+    min_coverage_threshold: 0.05  # 0.2 → 0.05
+    
+    # QTY_SUM 기반 비례 배분 파라미터 (극단적 유연성)
+    use_proportional_allocation: true
+    min_allocation_multiplier: 0.01  # 매우 넓은 범위
+    max_allocation_multiplier: 10.0  # 매우 넓은 범위
+    sku_distribution_penalty: 0.5   # 2.0 → 0.5
+    
+    # 희소 SKU 특별 제약 (관대하게)
+    enforce_scarce_distribution: false  # true → false
+    scarce_min_allocation_multiplier: 0.01
+    scarce_max_allocation_multiplier: 10.0
+    
+    # 매장 크기별 차등 제약 (관대하게)
+    apply_store_size_constraints: false  # true → false
+    large_store_max_multiplier: 10.0
+    small_store_max_multiplier: 5.0
+    
+    # 최소 배분 보장 (완화)
+    min_allocation_per_store: 0  # 1 → 0
+    min_stores_per_sku: 2       # 10 → 2
+
+  # 실용적 시나리오 (제약 완화)
+  practical:
+    description: "실용적 비즈니스 시나리오 (수렴성 고려)"
+    coverage_weight: 0.8
+    balance_penalty: 0.3   # 0.5 → 0.3
+    allocation_penalty: 0.1  # 0.3 → 0.1
+    allocation_range_min: 0.3  # 0.7 → 0.3
+    allocation_range_max: 3.0  # 1.5 → 3.0
+    min_coverage_threshold: 0.05  # 0.1 → 0.05
+    
+    # QTY_SUM 기반 비례 배분 파라미터 (실용적 설정 완화)
+    use_proportional_allocation: true
+    min_allocation_multiplier: 0.2  # 0.7 → 0.2
+    max_allocation_multiplier: 3.0  # 1.3 → 3.0
+    sku_distribution_penalty: 0.3  # 1.0 → 0.3
+    
+    # 희소 SKU 특별 제약 (완화)
+    enforce_scarce_distribution: false  # true → false
+    scarce_min_allocation_multiplier: 0.1
+    scarce_max_allocation_multiplier: 5.0
+    
+    # 매장 크기별 차등 제약 (완화)
+    apply_store_size_constraints: false  # true → false
+    large_store_max_multiplier: 3.0
+    small_store_max_multiplier: 2.0
+    
+    # 최소 배분 보장 (완화)
+    min_allocation_per_store: 0  # 1 → 0
+    min_stores_per_sku: 2       # 6 → 2
+
+  # 새로운 시나리오: 분산 중심 (제약 대폭 완화)
+  distribution_focused:
+    description: "SKU 분산 중심 (제약 완화로 수렴성 확보)"
+    coverage_weight: 0.3
+    balance_penalty: 0.2   # 0.5 → 0.2
+    allocation_penalty: 0.1  # 0.2 → 0.1
+    allocation_range_min: 0.3  # 0.6 → 0.3
+    allocation_range_max: 3.0  # 1.8 → 3.0
+    min_coverage_threshold: 0.05  # 0.1 → 0.05
+    
+    # QTY_SUM 기반 비례 배분 파라미터 (분산 최적화 완화)
+    use_proportional_allocation: true
+    min_allocation_multiplier: 0.4  # 0.8 → 0.4 (좁은 범위에서 넓은 범위로)
+    max_allocation_multiplier: 2.5  # 1.2 → 2.5 (좁은 범위에서 넓은 범위로)
+    sku_distribution_penalty: 1.0  # 3.0 → 1.0 (높은 분산 페널티 완화)
+    
+    # 희소 SKU 특별 제약 (완화)
+    enforce_scarce_distribution: false  # true → false
+    scarce_min_allocation_multiplier: 0.2
+    scarce_max_allocation_multiplier: 3.0
+    
+    # 매장 크기별 차등 제약 (비활성화 유지)
+    apply_store_size_constraints: false
+    large_store_max_multiplier: 3.0
+    small_store_max_multiplier: 2.0
+    
+    # 최소 배분 보장 (완화)
+    min_allocation_per_store: 0  # 2 → 0
+    min_stores_per_sku: 3       # 12 → 3
+
+  # 새로운 시나리오: 비례 배분 중심 (QTY_SUM 기반 최적화 완화)
+  proportional_focused:
+    description: "QTY_SUM 비례 배분 중심 (수렴성 우선)"
+    coverage_weight: 0.4
+    balance_penalty: 0.1   # 0.2 → 0.1
+    allocation_penalty: 0.05  # 0.1 → 0.05
+    allocation_range_min: 0.2   # 0.5 → 0.2
+    allocation_range_max: 5.0   # 2.0 → 5.0
+    min_coverage_threshold: 0.02  # 0.05 → 0.02
+    
+    # 타임아웃 설정 (비례 배분 전용 - 가장 긴 시간)
+    step1_timeout: 240   # Step1: 4분 
+    step2_timeout: 1800  # Step2: 30분 (가장 복잡한 비례 배분)
+    
+    # QTY_SUM 기반 비례 배분 파라미터 (매장 크기 반영하되 수렴성 확보)
+    use_proportional_allocation: true
+    min_allocation_multiplier: 0.3  # 0.9 → 0.3 (기대값에 가깝게 → 더 유연하게)
+    max_allocation_multiplier: 3.0  # 1.1 → 3.0 (기대값에 가깝게 → 더 유연하게)
+    sku_distribution_penalty: 0.2  # 0.5 → 0.2
+    
+    # 희소 SKU 특별 제약 (비활성화 유지)
+    enforce_scarce_distribution: false
+    scarce_min_allocation_multiplier: 0.3
+    scarce_max_allocation_multiplier: 3.0
+    
+    # 매장 크기별 차등 제약 (비활성화)
+    apply_store_size_constraints: false  # true → false (크기 차이 극대화 → 비활성화)
+    large_store_max_multiplier: 5.0
+    small_store_max_multiplier: 3.0
+    
+    # 최소 배분 보장 (완화)
+    min_allocation_per_store: 0  # 1 → 0
+    min_stores_per_sku: 2       # 4 → 2
+
+  # 새로운 시나리오: 최대 분산 (MAX_SKU_CONCENTRATION 최소화 완화)
+  max_dispersion:
+    description: "최대 분산 추구 (제약 완화로 수렴성 확보)"
+    coverage_weight: 0.2
+    balance_penalty: 0.3   # 0.8 → 0.3
+    allocation_penalty: 0.1  # 0.5 → 0.1
+    allocation_range_min: 0.5  # 0.8 → 0.5
+    allocation_range_max: 2.0  # 1.2 → 2.0
+    min_coverage_threshold: 0.02  # 0.05 → 0.02
+    
+    # QTY_SUM 기반 비례 배분 파라미터 (극단적 분산 완화)
+    use_proportional_allocation: true
+    min_allocation_multiplier: 0.7  # 0.95 → 0.7 (매우 좁은 범위 → 적당한 범위)
+    max_allocation_multiplier: 1.4  # 1.05 → 1.4 (매우 좁은 범위 → 적당한 범위)
+    sku_distribution_penalty: 2.0  # 5.0 → 2.0 (매우 높은 분산 페널티 완화)
+    
+    # 희소 SKU 특별 제약 (완화)
+    enforce_scarce_distribution: false  # true → false
+    scarce_min_allocation_multiplier: 0.7
+    scarce_max_allocation_multiplier: 1.4
+    
+    # 매장 크기별 차등 제약 (비활성화 유지)
+    apply_store_size_constraints: false
+    large_store_max_multiplier: 2.0
+    small_store_max_multiplier: 2.0
+    
+    # 최소 배분 보장 (완화)
+    min_allocation_per_store: 0  # 1 → 0
+    min_stores_per_sku: 5       # 15 → 5 (최소 15개 매장에 분산 → 5개로 완화)
+
+# 평가 메트릭 설정
+evaluation_metrics:
+  coverage_metrics:
+    - "평균 색상 커버리지 비율"
+    - "평균 사이즈 커버리지 비율"
+    - "커버리지 0인 매장 수"
+    - "완전 커버리지(100%) 매장 수"
+
+  balance_metrics:
+    - "색상-사이즈 커버리지 불균형 평균"
+    - "매장별 배분량 표준편차"
+    - "매장별 배분 비율 상관계수"
+    - "Gini 계수 (분배 불평등)"
+
+  business_metrics:
+    - "총 할당 효율성"
+    - "희소 SKU 활용률"
+    - "매장별 상품 다양성 지수"
+    - "예상 고객 만족도 점수"
+
+# 실험 계획
+experiment_phases:
+  phase1:
+    name: "베이스라인 확립"
+    scenarios: ["baseline"]
+    purpose: "기본 성능 측정, 다른 시나리오와 비교할 기준점 설정"
+
+  phase2:
+    name: "단일 목표 최적화"
+    scenarios: ["coverage_focused", "balance_focused"]
+    purpose: "각 목표를 극대화했을 때의 효과와 부작용 측정"
+
+  phase3:
+    name: "균형점 탐색"
+    scenarios: ["hybrid", "practical"]
+    purpose: "실용적인 트레이드오프 지점 찾기"
+
+  phase4:
+    name: "극단적 케이스"
+    scenarios: ["extreme_coverage"]
+    purpose: "시스템의 한계 테스트, 실현 가능성 검증"
+
+# 민감도 분석 설정
+sensitivity_analysis:
+  coverage_weight_values: [0.1, 0.3, 0.5, 1.0, 2.0, 5.0]
+  balance_penalty_values: [0.01, 0.05, 0.1, 0.5, 1.0]
+  allocation_penalty_values: [0.01, 0.05, 0.1, 0.5, 1.0, 2.0]
+  allocation_ranges:
+    - [0.3, 2.0]
+    - [0.5, 1.5]
+    - [0.7, 1.3]
+    - [0.8, 1.2]
+    - [0.9, 1.1]
+
+# 출력 설정
+output_settings:
+  save_plots: true
+  plot_format: "png"
+  plot_dpi: 300
+  include_summary_stats: true
+  create_comparison_charts: true
+
+# 최적화 설정
+optimization:
+  step1_timeout: 60   # Step1 최적화 타임아웃 (초)
+  step2_timeout: 300  # Step2 최적화 타임아웃 (초)
+  solver_verbose: false
+  
+# 결과 정리 설정
+cleanup:
+  auto_cleanup: true
+  keep_latest_experiments: 20
+  cleanup_interval_days: 7 

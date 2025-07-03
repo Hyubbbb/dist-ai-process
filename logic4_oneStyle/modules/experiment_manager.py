@@ -172,8 +172,6 @@ class ExperimentManager:
 - 커버리지 가중치: {params.get('coverage_weight', 'N/A')}
 - 균형 페널티: {params.get('balance_penalty', 'N/A')}
 - 배분 페널티: {params.get('allocation_penalty', 'N/A')}
-- 배분 범위: {params.get('allocation_range_min', 0)*100:.0f}% ~ {params.get('allocation_range_max', 0)*100:.0f}%
-- 최소 커버리지: {params.get('min_coverage_threshold', 0)*100:.0f}%
 
 ⚡ 최적화 결과:
 - 상태: {optimization_summary.get('status', 'unknown')}

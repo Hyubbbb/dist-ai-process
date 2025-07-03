@@ -184,9 +184,32 @@ class IntegratedOptimizer:
             if isinstance(x[i][j], LpVariable) and A[i] <= 100  # 희소 기준
         )
         
-        # 목적함수 통합
+        # 6. 🆕 매장별 배분 편차 페널티 (allocation_penalty 적용)
+        total_supply = sum(A.values())
+        total_qsum = sum(QSUM[j] for j in target_stores)
+        
+        allocation_penalty_term = 0
+        if allocation_penalty > 0:
+            # 각 매장의 기대 배분량 대비 실제 배분량 편차를 페널티로 적용
+            for j in target_stores:
+                # 매장 j의 기대 배분량 (QTY_SUM 비례)
+                expected_allocation = (QSUM[j] / total_qsum) * total_supply if total_qsum > 0 else 0
+                
+                # 실제 배분량
+                actual_allocation = lpSum(x[i][j] for i in SKUs if isinstance(x[i][j], LpVariable))
+                
+                # 편차 변수 생성 (이미 tier_balance_vars에 포함되어야 하지만, 새로 생성)
+                allocation_dev_var = LpVariable(f"allocation_dev_{j}", lowBound=0)
+                
+                # 편차 계산 제약조건
+                self.prob += allocation_dev_var >= actual_allocation - expected_allocation
+                self.prob += allocation_dev_var >= expected_allocation - actual_allocation
+                
+                allocation_penalty_term -= allocation_penalty * allocation_dev_var
+        
+        # 목적함수 통합 (allocation_penalty_term 추가)
         self.prob += (coverage_term + allocation_term + balance_penalty_term + 
-                     allocation_efficiency_term + scarce_bonus)
+                     allocation_efficiency_term + scarce_bonus + allocation_penalty_term)
         
         print(f"   📊 목적함수 구성:")
         print(f"      커버리지 항 (가중치: {coverage_weight})")
@@ -194,6 +217,7 @@ class IntegratedOptimizer:
         print(f"      Tier 균형 항 (페널티: {balance_penalty})")
         print(f"      배분 효율성 항 (가중치: 0.05)")
         print(f"      희소 SKU 보너스 (가중치: 0.2)")
+        print(f"      🆕 배분 편차 페널티 (가중치: {allocation_penalty})")
     
     def _add_supply_constraints(self, x, SKUs, stores, A):
         """공급량 제약조건"""
@@ -426,8 +450,28 @@ class IntegratedOptimizer:
                         scarce_bonus_value += x[i][j].value()
         scarce_bonus_value *= 0.2
         
+        # 6. 🆕 매장별 배분 편차 페널티 계산 (결과 분석용)
+        allocation_penalty_value = 0
+        if hasattr(self, 'final_allocation') and allocation_penalty > 0:
+            total_supply = sum(A.values())
+            total_qsum = sum(QSUM[j] for j in target_stores)
+            
+            total_deviation = 0
+            for j in target_stores:
+                # 매장 j의 기대 배분량 (QTY_SUM 비례)
+                expected_allocation = (QSUM[j] / total_qsum) * total_supply if total_qsum > 0 else 0
+                
+                # 실제 배분량 계산
+                actual_allocation = sum(qty for (sku, store), qty in self.final_allocation.items() if store == j)
+                
+                # 편차 계산
+                deviation = abs(actual_allocation - expected_allocation)
+                total_deviation += deviation
+            
+            allocation_penalty_value = -allocation_penalty * total_deviation
+        
         total_objective = (coverage_term_value + allocation_term_value + 
-                          balance_penalty_value + efficiency_term_value + scarce_bonus_value)
+                          balance_penalty_value + efficiency_term_value + scarce_bonus_value + allocation_penalty_value)
         
         return {
             'coverage_term': coverage_term_value,
@@ -435,6 +479,7 @@ class IntegratedOptimizer:
             'balance_penalty': balance_penalty_value,
             'efficiency_term': efficiency_term_value,
             'scarce_bonus': scarce_bonus_value,
+            'allocation_penalty': allocation_penalty_value,
             'total_objective': total_objective,
             'coverage_weight': coverage_weight,
             'balance_penalty_weight': balance_penalty

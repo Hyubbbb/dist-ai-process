@@ -13,7 +13,7 @@ from modules import (
     DataLoader, StoreTierSystem, SKUClassifier, 
     ResultAnalyzer, ResultVisualizer, ExperimentManager
 )
-from two_step_optimizer import TwoStepOptimizer
+from modules.two_step_optimizer import TwoStepOptimizer
 from config import EXPERIMENT_SCENARIOS, DEFAULT_TARGET_STYLE, DEFAULT_SCENARIO
 from modules.objective_analyzer import ObjectiveAnalyzer
 
@@ -158,10 +158,14 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
                 print(f"       커버리지 점수: {step_analysis['step1']['objective']:.1f}")
                 print(f"       선택된 SKU-매장 조합: {step_analysis['step1']['combinations']}개")
                 print(f"       소요 시간: {step_analysis['step1']['time']:.2f}초")
-                print(f"   📦 Step2 - 룰베이스 배분:")
+                print(f"   📦 Step2 - 1개씩 추가 배분:")
                 print(f"       추가 배분량: {step_analysis['step2']['additional_allocation']}개")
                 print(f"       소요 시간: {step_analysis['step2']['time']:.2f}초")
-                print(f"   🎲 배분 우선순위: {scenario_params.get('allocation_priority', 'sequential')}")
+                print(f"   📦 Step3 - 잔여 수량 추가 배분:")
+                print(f"       추가 배분량: {step_analysis['step3']['additional_allocation']}개")
+                print(f"       소요 시간: {step_analysis['step3']['time']:.2f}초")
+                print(f"   🎲 Step2 우선순위: {scenario_params.get('allocation_priority_step2', scenario_params.get('allocation_priority', 'balanced'))}")
+                print(f"   🎲 Step3 우선순위: {scenario_params.get('allocation_priority_step3', scenario_params.get('allocation_priority', 'balanced'))}")
                 print(f"   ⏱️ 총 소요시간: {step_analysis['total_time']:.2f}초")
                 
                 # 배분 우선순위 설명
@@ -331,7 +335,7 @@ if __name__ == "__main__":
     high_coverage_balanced: 고커버리지 + 균형 배분
     """
     result = run_optimization(target_style='DWLG42044', 
-                              scenario='baseline')
+                              scenario='my_custom')
     
     # result = run_batch_experiments(['DWLG42044'], 
     #                                ['baseline', 'balanced', 'random'])

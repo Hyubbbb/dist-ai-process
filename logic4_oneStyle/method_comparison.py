@@ -16,7 +16,7 @@ from modules import (
     DataLoader, StoreTierSystem, SKUClassifier, 
     IntegratedOptimizer, ResultAnalyzer
 )
-from two_step_optimizer import TwoStepOptimizer
+from modules.two_step_optimizer import TwoStepOptimizer
 from config import EXPERIMENT_SCENARIOS
 
 

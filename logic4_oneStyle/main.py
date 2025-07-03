@@ -139,7 +139,7 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
                 # 배분 매트릭스 히트맵 (PNG로 저장) - 100개 매장 모두 표시
                 visualizer.create_allocation_matrix_heatmap(
                     final_allocation, target_stores, data['SKUs'], 
-                    data['QSUM'], data_loader.df_sku_filtered, 
+                    data['QSUM'], data_loader.df_sku_filtered, data['A'], tier_system,
                     save_path=matrix_heatmap_path, max_stores=100, max_skus=8
                 )
                 
@@ -313,7 +313,11 @@ if __name__ == "__main__":
     print("="*50)
     
     # 기본 설정으로 단일 실험 실행
-    result = run_optimization()
+    result = run_optimization(target_style='DWLG42044', 
+                              scenario='hybrid')
+    
+    # result = run_batch_experiments(['DWLG42044'], 
+    #                                ['baseline', 'extreme_coverage'])
     
     # 실험 목록 출력
     print("\n" + "="*50)

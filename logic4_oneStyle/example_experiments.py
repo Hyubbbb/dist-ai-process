@@ -61,19 +61,19 @@ def example_3_batch_experiments():
     # 여러 스타일이 있다고 가정 (실제 데이터에 따라 조정)
     target_styles = [
                      "DWLG42044",
-                    #  "DWDJ68046",
-                    #  "DMDJ85046",
-                    #  "DWDJ8P046",
-                    #  "DXDJ8C046",
-                    #  "DXMT33044",
-                    #  "DWLG42044",
+                     "DWDJ68046",
+                     "DMDJ85046",
+                     "DWDJ8P046",
+                     "DXDJ8C046",
+                     "DXMT33044",
+                     "DWLG42044",
                      ]  # 현재 사용 가능한 스타일
     scenarios = [
-                # "baseline", 
-                #  "coverage_focused", 
-                #  "balance_focused",
+                "baseline", 
+                 "coverage_focused", 
+                 "balance_focused",
                  "hybrid",
-                #  "extreme_coverage"
+                 "extreme_coverage"
                  ]
     
     results = run_batch_experiments(

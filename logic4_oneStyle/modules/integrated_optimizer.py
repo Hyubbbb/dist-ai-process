@@ -49,11 +49,12 @@ class IntegratedOptimizer:
         print(f"🎯 통합 MILP 최적화 시작 (스타일: {self.target_style})")
         print(f"   전체 SKU: {len(SKUs)}개 (희소: {len(scarce_skus)}개, 충분: {len(abundant_skus)}개)")
         print(f"   대상 매장: {len(target_stores)}개")
-        print(f"   시나리오: 커버리지 가중치={scenario_params['coverage_weight']}, 균형 페널티={scenario_params['balance_penalty']}")
+        print(f"   시나리오: 커버리지 가중치={scenario_params['coverage_weight']} (순수 커버리지만)")
         
         # 최적화 데이터 저장 (목적함수 분해 분석용)
         self.last_scenario_params = scenario_params.copy()
         self.last_data = data.copy()
+        self.df_sku_filtered = df_sku_filtered  # SKU별 확장을 위해 저장
         
         # 최적화 문제 생성
         self.prob = LpProblem(f'Integrated_MILP_{self.target_style}', LpMaximize)
@@ -79,11 +80,29 @@ class IntegratedOptimizer:
         
         # 4. 최적화 실행
         print(f"   ⚡ 최적화 실행 중...")
+        
+        # 🔍 문제 복잡도 진단
+        self._diagnose_problem_complexity()
+        
         start_time = time.time()
         
-        self.prob.solve(solver=PULP_CBC_CMD(msg=False, timeLimit=300))
+        # Solver 설정: verbose 출력 + 더 긴 timeout
+        solver = PULP_CBC_CMD(
+            msg=True,           # verbose 출력 켜기
+            timeLimit=600,      # 10분 timeout
+            gapRel=0.01,        # 1% gap에서 허용
+            threads=4           # 멀티쓰레딩 사용
+        )
+        
+        print(f"   🔧 Solver 설정: CBC with 10분 timeout, 1% gap tolerance")
+        
+        self.prob.solve(solver=solver)
         
         solve_time = time.time() - start_time
+        
+        # 🔍 최적화 결과 진단
+        self._diagnose_optimization_result(solve_time)
+        
         print(f"   ⏱️ 최적화 완료: {solve_time:.2f}초")
         
         # 5. 결과 저장
@@ -112,9 +131,14 @@ class IntegratedOptimizer:
         x = {}
         for i in SKUs:
             x[i] = {}
+            
+            # 현재는 모든 SKU가 같은 target_stores를 사용
+            # 향후 SKU별로 다른 매장 리스트가 지정될 수 있음
+            sku_target_stores = target_stores  # 현재는 동일
+            
             for j in stores:
-                if j in target_stores:
-                    # 매장별 최대 할당 한도를 기반으로 상한 설정
+                if j in sku_target_stores:
+                    # 해당 매장의 tier 정보 가져오기 (기본 시스템 사용)
                     tier_info = tier_system.get_store_tier_info(j, target_stores)
                     max_qty_per_sku = tier_info['max_sku_limit']
                     x[i][j] = LpVariable(f'x_{i}_{j}', lowBound=0, upBound=max_qty_per_sku, cat=LpInteger)
@@ -145,79 +169,51 @@ class IntegratedOptimizer:
         
         return x, color_coverage, size_coverage, tier_balance_vars
     
+    def _get_sku_target_stores(self, sku, default_target_stores, tier_system):
+        """SKU별 배분 대상 매장 결정"""
+        # 현재는 모든 SKU가 같은 매장을 사용
+        # 향후 tier_system에 SKU별 매장 지정 정보가 있으면 그것을 사용
+        sku_stores = tier_system.get_sku_target_stores(sku)
+        if sku_stores:
+            return sku_stores
+        else:
+            return default_target_stores
+    
+    def _get_sku_store_tier_info(self, sku, store, sku_target_stores, tier_system):
+        """SKU별 매장 tier 정보 가져오기"""
+        # 현재는 기본 tier 시스템 사용
+        # 향후 SKU별로 다른 tier 정보가 필요하면 확장 가능
+        try:
+            return tier_system.get_store_tier_info(store, sku_target_stores)
+        except:
+            # 기본값 반환 (안전장치)
+            return {
+                'store_id': store,
+                'tier_name': 'TIER_3_LOW',
+                'max_sku_limit': 1,
+                'tier_ratio': 0.5
+            }
+    
     def _set_integrated_objective(self, x, color_coverage, size_coverage, tier_balance_vars,
                                 SKUs, stores, target_stores, scenario_params, A, QSUM):
-        """통합 목적함수 설정"""
+        """통합 목적함수 설정 - 순수 커버리지만"""
         s = self.target_style
         
         # 가중치 추출
         coverage_weight = scenario_params['coverage_weight']
-        balance_penalty = scenario_params['balance_penalty']
-        allocation_penalty = scenario_params['allocation_penalty']
         
-        # 1. 커버리지 최대화 (기존과 동일)
+        # 순수 커버리지만 최대화
         coverage_term = coverage_weight * lpSum(
             color_coverage[(s,j)] + size_coverage[(s,j)] 
             for j in stores if isinstance(color_coverage[(s,j)], LpVariable)
         )
         
-        # 2. 전체 배분량 최대화 (공급량 활용도)
-        allocation_term = 0.1 * lpSum(
-            x[i][j] for i in SKUs for j in stores if isinstance(x[i][j], LpVariable)
-        )
+        # 목적함수: 커버리지만
+        self.prob += coverage_term
         
-        # 3. Tier 균형 페널티 (편차 최소화)
-        balance_penalty_term = -balance_penalty * lpSum(
-            tier_balance_vars[f'{tier}_deviation'] 
-            for tier in ['TIER_1_HIGH', 'TIER_2_MEDIUM', 'TIER_3_LOW']
-        )
-        
-        # 4. 매장 크기 대비 적정 배분량 보너스
-        allocation_efficiency_term = 0.05 * lpSum(
-            lpSum(x[i][j] for i in SKUs if isinstance(x[i][j], LpVariable)) / max(QSUM[j], 1) * 1000
-            for j in target_stores
-        )
-        
-        # 5. 희소 SKU 우선 배분 보너스
-        scarce_bonus = 0.2 * lpSum(
-            x[i][j] for i in SKUs for j in stores 
-            if isinstance(x[i][j], LpVariable) and A[i] <= 100  # 희소 기준
-        )
-        
-        # 6. 🆕 매장별 배분 편차 페널티 (allocation_penalty 적용)
-        total_supply = sum(A.values())
-        total_qsum = sum(QSUM[j] for j in target_stores)
-        
-        allocation_penalty_term = 0
-        if allocation_penalty > 0:
-            # 각 매장의 기대 배분량 대비 실제 배분량 편차를 페널티로 적용
-            for j in target_stores:
-                # 매장 j의 기대 배분량 (QTY_SUM 비례)
-                expected_allocation = (QSUM[j] / total_qsum) * total_supply if total_qsum > 0 else 0
-                
-                # 실제 배분량
-                actual_allocation = lpSum(x[i][j] for i in SKUs if isinstance(x[i][j], LpVariable))
-                
-                # 편차 변수 생성 (이미 tier_balance_vars에 포함되어야 하지만, 새로 생성)
-                allocation_dev_var = LpVariable(f"allocation_dev_{j}", lowBound=0)
-                
-                # 편차 계산 제약조건
-                self.prob += allocation_dev_var >= actual_allocation - expected_allocation
-                self.prob += allocation_dev_var >= expected_allocation - actual_allocation
-                
-                allocation_penalty_term -= allocation_penalty * allocation_dev_var
-        
-        # 목적함수 통합 (allocation_penalty_term 추가)
-        self.prob += (coverage_term + allocation_term + balance_penalty_term + 
-                     allocation_efficiency_term + scarce_bonus + allocation_penalty_term)
-        
-        print(f"   📊 목적함수 구성:")
-        print(f"      커버리지 항 (가중치: {coverage_weight})")
-        print(f"      배분량 항 (가중치: 0.1)")
-        print(f"      Tier 균형 항 (페널티: {balance_penalty})")
-        print(f"      배분 효율성 항 (가중치: 0.05)")
-        print(f"      희소 SKU 보너스 (가중치: 0.2)")
-        print(f"      🆕 배분 편차 페널티 (가중치: {allocation_penalty})")
+        print(f"   📊 순수 커버리지 목적함수:")
+        print(f"      🎯 커버리지 항 (가중치: {coverage_weight}) - 유일한 목적함수")
+        print(f"      ⚠️  여러 최적해가 존재할 수 있으며, solver가 그 중 하나를 선택합니다")
     
     def _add_supply_constraints(self, x, SKUs, stores, A):
         """공급량 제약조건"""
@@ -385,27 +381,99 @@ class IntegratedOptimizer:
         """최종 배분 결과 반환"""
         return self.final_allocation 
     
+    def _diagnose_problem_complexity(self):
+        """🔍 문제 복잡도 진단"""
+        num_variables = len([var for var in self.prob.variables() if var.name])
+        num_constraints = len(self.prob.constraints)
+        
+        print(f"   📊 문제 복잡도 분석:")
+        print(f"      변수 수: {num_variables:,}개")
+        print(f"      제약조건 수: {num_constraints:,}개")
+        
+        # 복잡도 평가
+        if num_variables > 10000 or num_constraints > 5000:
+            print(f"      ⚠️  대규모 문제: 수렴에 시간이 오래 걸릴 수 있습니다")
+        elif num_variables > 5000 or num_constraints > 2000:
+            print(f"      🔶 중간 규모 문제: 적당한 수렴 시간 예상")
+        else:
+            print(f"      ✅ 소규모 문제: 빠른 수렴 예상")
+        
+        # 변수 타입별 분석
+        integer_vars = len([var for var in self.prob.variables() if var.cat == 'Integer'])
+        binary_vars = len([var for var in self.prob.variables() if var.cat == 'Binary'])
+        continuous_vars = num_variables - integer_vars - binary_vars
+        
+        print(f"      변수 타입: 정수 {integer_vars}, 바이너리 {binary_vars}, 연속 {continuous_vars}")
+        
+        if binary_vars > 1000:
+            print(f"      ⚠️  바이너리 변수가 많아 조합 복잡도가 높습니다")
+    
+    def _diagnose_optimization_result(self, solve_time):
+        """🔍 최적화 결과 진단"""
+        status_messages = {
+            1: "✅ Optimal - 최적해 발견",
+            0: "❓ Not Solved - 해를 찾지 못함",
+            -1: "❌ Infeasible - 실행 불가능한 문제",
+            -2: "❌ Unbounded - 무한대 해",
+            -3: "❌ Undefined - 정의되지 않은 상태"
+        }
+        
+        status = self.prob.status
+        message = status_messages.get(status, f"❓ Unknown Status: {status}")
+        
+        print(f"   🔍 최적화 결과 진단:")
+        print(f"      상태: {message}")
+        print(f"      소요 시간: {solve_time:.2f}초")
+        
+        if status == 1:  # Optimal
+            obj_value = self.prob.objective.value()
+            print(f"      목적함수 값: {obj_value:.2f}")
+            print(f"      ✅ 성공적으로 최적해를 찾았습니다!")
+            
+        elif status == 0:  # Not Solved
+            print(f"      ⚠️  시간 초과 또는 수렴 실패")
+            print(f"      💡 가능한 원인:")
+            print(f"         - 문제가 너무 복잡함 (timeout 증가 필요)")
+            print(f"         - 여러 동등한 최적해 존재 (solver가 선택 어려움)")
+            print(f"         - 제약조건이 너무 tight함")
+            
+        elif status == -1:  # Infeasible
+            print(f"      ❌ 실행 불가능한 문제입니다")
+            print(f"      💡 가능한 원인:")
+            print(f"         - 공급량 < 수요량")
+            print(f"         - 매장별 제한이 너무 엄격함")
+            print(f"         - 상충하는 제약조건들")
+            print(f"      🔧 해결책:")
+            print(f"         - 제약조건 완화")
+            print(f"         - 공급량 증가")
+            print(f"         - 매장별 한도 조정")
+            
+        elif status == -2:  # Unbounded
+            print(f"      ❌ 무한대 해 - 목적함수가 제한되지 않음")
+            print(f"      💡 제약조건이 부족하거나 잘못 설정됨")
+            
+        # 추가 진단 정보
+        if solve_time > 300:  # 5분 이상
+            print(f"      ⏰ 긴 수렴 시간 감지")
+            print(f"      💡 개선 방안:")
+            print(f"         - Solver 파라미터 조정")
+            print(f"         - 문제 단순화")
+            print(f"         - 휴리스틱 초기해 제공")
+    
     def get_objective_breakdown(self):
-        """목적함수 구성요소별 값 분해 분석 (저장된 최적화 변수 사용)"""
+        """목적함수 구성요소별 값 분해 분석 (순수 커버리지만)"""
         if not self.optimization_vars or self.prob.status != 1:
             print("❌ 최적화가 완료되지 않았거나 최적해가 없습니다.")
             return {}
         
         # 저장된 변수들 불러오기
-        x = self.optimization_vars['x']
         color_coverage = self.optimization_vars['color_coverage']
         size_coverage = self.optimization_vars['size_coverage']
-        tier_balance_vars = self.optimization_vars['tier_balance_vars']
-        SKUs = self.optimization_vars['SKUs']
-        stores = self.optimization_vars['stores']
         target_stores = self.optimization_vars['target_stores']
-        A = self.optimization_vars['A']
-        QSUM = self.optimization_vars['QSUM']
         
         coverage_weight = self.last_scenario_params.get('coverage_weight', 1.0)
-        balance_penalty = self.last_scenario_params.get('balance_penalty', 0.1)
         
-        # 1. 커버리지 항 계산
+        # 커버리지 항 계산
         coverage_term_value = 0
         s = self.target_style
         for j in target_stores:
@@ -415,72 +483,8 @@ class IntegratedOptimizer:
                 coverage_term_value += size_coverage[(s,j)].value()
         coverage_term_value *= coverage_weight
         
-        # 2. 전체 배분량 항 계산
-        allocation_term_value = 0
-        for i in SKUs:
-            for j in stores:
-                if isinstance(x[i][j], LpVariable) and x[i][j].value() is not None:
-                    allocation_term_value += x[i][j].value()
-        allocation_term_value *= 0.1
-        
-        # 3. Tier 균형 페널티 계산
-        balance_penalty_value = 0
-        for tier in ['TIER_1_HIGH', 'TIER_2_MEDIUM', 'TIER_3_LOW']:
-            deviation_var = tier_balance_vars.get(f'{tier}_deviation')
-            if isinstance(deviation_var, LpVariable) and deviation_var.value() is not None:
-                balance_penalty_value += deviation_var.value()
-        balance_penalty_value *= -balance_penalty
-        
-        # 4. 배분 효율성 항 계산
-        efficiency_term_value = 0
-        for j in target_stores:
-            store_total = sum(
-                x[i][j].value() if isinstance(x[i][j], LpVariable) and x[i][j].value() is not None else 0
-                for i in SKUs
-            )
-            efficiency_term_value += store_total / max(QSUM[j], 1) * 1000
-        efficiency_term_value *= 0.05
-        
-        # 5. 희소 SKU 보너스 계산
-        scarce_bonus_value = 0
-        for i in SKUs:
-            if A[i] <= 100:  # 희소 기준
-                for j in stores:
-                    if isinstance(x[i][j], LpVariable) and x[i][j].value() is not None:
-                        scarce_bonus_value += x[i][j].value()
-        scarce_bonus_value *= 0.2
-        
-        # 6. 🆕 매장별 배분 편차 페널티 계산 (결과 분석용)
-        allocation_penalty_value = 0
-        if hasattr(self, 'final_allocation') and allocation_penalty > 0:
-            total_supply = sum(A.values())
-            total_qsum = sum(QSUM[j] for j in target_stores)
-            
-            total_deviation = 0
-            for j in target_stores:
-                # 매장 j의 기대 배분량 (QTY_SUM 비례)
-                expected_allocation = (QSUM[j] / total_qsum) * total_supply if total_qsum > 0 else 0
-                
-                # 실제 배분량 계산
-                actual_allocation = sum(qty for (sku, store), qty in self.final_allocation.items() if store == j)
-                
-                # 편차 계산
-                deviation = abs(actual_allocation - expected_allocation)
-                total_deviation += deviation
-            
-            allocation_penalty_value = -allocation_penalty * total_deviation
-        
-        total_objective = (coverage_term_value + allocation_term_value + 
-                          balance_penalty_value + efficiency_term_value + scarce_bonus_value + allocation_penalty_value)
-        
         return {
             'coverage_term': coverage_term_value,
-            'allocation_term': allocation_term_value,  
-            'balance_penalty': balance_penalty_value,
-            'efficiency_term': efficiency_term_value,
-            'scarce_bonus': scarce_bonus_value,
-            'allocation_penalty': allocation_penalty_value,
-            'total_objective': total_objective,
-            'coverage_weight': coverage_weight,
-            'balance_penalty_weight': balance_penalty
+            'total_objective': coverage_term_value,
+            'coverage_weight': coverage_weight
         } 

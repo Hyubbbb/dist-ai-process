@@ -169,9 +169,7 @@ class ExperimentManager:
 설명: {params.get('description', 'N/A')}
 
 📊 실험 파라미터:
-- 커버리지 가중치: {params.get('coverage_weight', 'N/A')}
-- 균형 페널티: {params.get('balance_penalty', 'N/A')}
-- 배분 페널티: {params.get('allocation_penalty', 'N/A')}
+- 커버리지 가중치: {params.get('coverage_weight', 'N/A')} (순수 커버리지 목적함수)
 
 ⚡ 최적화 결과:
 - 상태: {optimization_summary.get('status', 'unknown')}

@@ -104,10 +104,11 @@ class CoverageOptimizer:
             size_coverage[(s,j)] for j in stores if isinstance(size_coverage[(s,j)], LpVariable)
         )
         
-        # 할당량 보너스
-        allocation_bonus = epsilon * lpSum(
-            b[i][j] for i in scarce_skus for j in stores if isinstance(b[i][j], LpVariable)
-        )
+        # 할당량 보너스 (의미가 없는 것 같아서, 주석처리)
+        allocation_bonus = 0 
+        # allocation_bonus = epsilon * lpSum(
+        #     b[i][j] for i in scarce_skus for j in stores if isinstance(b[i][j], LpVariable)
+        # )
         
         self.prob += color_coverage_sum + size_coverage_sum + allocation_bonus
     

@@ -261,7 +261,7 @@ Performance Summary
         return fig 
     
     def create_allocation_matrix_heatmap(self, final_allocation, target_stores, SKUs, QSUM, 
-                                       df_sku_filtered, save_path=None, max_stores=30, max_skus=20):
+                                       df_sku_filtered, A, tier_system, save_path=None, max_stores=30, max_skus=20):
         """
         배분 결과를 매장 × SKU 매트릭스 히트맵으로 시각화
         
@@ -270,12 +270,56 @@ Performance Summary
             target_stores: 배분 대상 매장 리스트 (QTY_SUM 내림차순 정렬됨)
             SKUs: SKU 리스트
             QSUM: 매장별 QTY_SUM 딕셔너리
-            df_sku_filtered: 필터링된 SKU 데이터프레임
-            save_path: 저장 경로 (None이면 화면 표시)
+            df_sku_filtered: 필터링된 SKU 데이터프레임  
+            A: SKU별 공급량 딕셔너리
+            tier_system: 매장 tier 시스템
+            save_path: 저장 경로 (None이면 화면 표시)  
             max_stores: 표시할 최대 매장 수
             max_skus: 표시할 최대 SKU 수
         """
         print("📊 배분 매트릭스 히트맵 생성 중...")
+        
+        # 0. Tier 기반 배분 가능량 계산 메서드 정의
+        def calculate_max_allocatable_by_tier(sku, target_stores, tier_system, A, QSUM):
+            """Tier별 배분 한도를 고려한 해당 SKU의 최대 배분 가능량 계산"""
+            # 현재는 모든 SKU가 같은 target_stores를 사용
+            # 향후 SKU별로 다른 매장 리스트가 지정되면 tier_system.get_sku_target_stores(sku) 활용
+            sku_target_stores = tier_system.get_sku_target_stores(sku, target_stores)
+            
+            tier_based_capacity = 0
+            for store in sku_target_stores:
+                # 기본 tier 시스템 사용
+                tier_info = tier_system.get_store_tier_info(store, sku_target_stores)
+                tier_based_capacity += tier_info['max_sku_limit']
+            
+            # 실제 공급량과 tier 기반 용량 중 작은 값
+            actual_supply = A.get(sku, 0)
+            return min(actual_supply, tier_based_capacity)
+        
+        def get_sku_target_stores(sku, default_target_stores):
+            """SKU별 배분 대상 매장 결정"""
+            # 현재는 모든 SKU가 같은 매장을 사용
+            # 향후 tier_system에 SKU별 매장 지정 정보가 있으면 그것을 사용
+            sku_stores = tier_system.get_sku_target_stores(sku)
+            if sku_stores:
+                return sku_stores
+            else:
+                return default_target_stores
+        
+        def get_sku_store_tier_info(sku, store, sku_target_stores, tier_system):
+            """SKU별 매장 tier 정보 가져오기"""
+            # 현재는 기본 tier 시스템 사용
+            # 향후 SKU별로 다른 tier 정보가 필요하면 확장 가능
+            try:
+                return tier_system.get_store_tier_info(store, sku_target_stores)
+            except:
+                # 기본값 반환 (안전장치)
+                return {
+                    'store_id': store,
+                    'tier_name': 'TIER_3_LOW',
+                    'max_sku_limit': 1,
+                    'tier_ratio': 0.5
+                }
         
         # 1. 배분이 있는 매장들만 필터링하고 QTY_SUM 기준으로 정렬
         allocated_stores = []
@@ -339,42 +383,25 @@ Performance Summary
             # 매장 라벨 (매장ID + QTY_SUM)
             store_labels.append(f"{store}\n({QSUM[store]:,})")
         
-        # 4. SKU 라벨 및 컬러 그룹 정보 생성
+        # 4. SKU 라벨에 배분 정보 포함 생성
         sku_labels = []
-        color_groups = []  # 컬러별 그룹 정보
-        current_color = None
-        color_start_idx = 0
-        
-        for i, sku in enumerate(selected_skus):
+        for sku in selected_skus:
             try:
                 sku_info = df_sku_filtered[df_sku_filtered['SKU'] == sku].iloc[0]
                 color = sku_info['COLOR_CD']
                 size = sku_info['SIZE_CD'] 
-                sku_labels.append(f"{color}\n{size}")  # 컬러-사이즈 통합 표시
-                
-                # 컬러 그룹 변경 감지
-                if current_color != color:
-                    if current_color is not None:
-                        # 이전 그룹 완료
-                        color_groups.append((current_color, color_start_idx, i-1))
-                    current_color = color
-                    color_start_idx = i
-                    
             except:
                 parts = sku.split('_')
                 color = parts[1] if len(parts) >= 3 else 'Unknown'
                 size = parts[2] if len(parts) >= 3 else 'Unknown'
-                sku_labels.append(f"{color}\n{size}")
-                
-                if current_color != color:
-                    if current_color is not None:
-                        color_groups.append((current_color, color_start_idx, i-1))
-                    current_color = color
-                    color_start_idx = i
-        
-        # 마지막 그룹 추가
-        if current_color is not None:
-            color_groups.append((current_color, color_start_idx, len(selected_skus)-1))
+            
+            # 실제 배분된 총량 계산
+            total_allocated = sum(final_allocation.get((sku, store), 0) for store in target_stores)
+            # Tier 기반 배분 가능량 계산
+            max_allocatable_qty = calculate_max_allocatable_by_tier(sku, target_stores, tier_system, A, QSUM)
+            
+            # 라벨에 배분 정보 포함 (실제배분량/Tier기반최대배분가능량)
+            sku_labels.append(f"{color}-{size}\n({total_allocated}/{max_allocatable_qty})")
         
         # 5. 히트맵 생성
         fig, ax = plt.subplots(figsize=(max(12, len(selected_skus) * 0.8), 
@@ -394,18 +421,8 @@ Performance Summary
         # 축 설정
         ax.set_xticks(np.arange(len(selected_skus)))
         ax.set_yticks(np.arange(len(selected_stores)))
-        ax.set_xticklabels(sku_labels, rotation=0, ha='center', fontsize=9)  # 컬러-사이즈 통합 표시
+        ax.set_xticklabels(sku_labels, rotation=45, ha='right', fontsize=9)
         ax.set_yticklabels(store_labels, ha='right', fontsize=9)
-        
-        # 컬러 그룹 구분선 추가 (그룹 사이에만)
-        for color, start_idx, end_idx in color_groups:
-            if end_idx < len(selected_skus) - 1:  # 마지막 그룹이 아닌 경우
-                ax.axvline(x=end_idx + 0.5, color='red', linestyle='--', linewidth=2, alpha=0.8)
-        
-        # 그리드 추가
-        ax.set_xticks(np.arange(len(selected_skus)+1)-0.5, minor=True)
-        ax.set_yticks(np.arange(len(selected_stores)+1)-0.5, minor=True)
-        ax.grid(which='minor', color='lightgray', linestyle='-', linewidth=0.5)
         
         # 텍스트 추가 (배분량 표시)
         for i in range(len(selected_stores)):
@@ -423,22 +440,11 @@ Performance Summary
         ax.set_xlabel('SKU (Color-Size)', fontsize=12)
         ax.set_ylabel('Store ID (QTY_SUM)', fontsize=12)
         
-        # 통계 정보 추가
+        # 간단한 통계 정보만 추가
         total_allocated = matrix_data.sum()
-        total_combinations = len(selected_stores) * len(selected_skus)
         filled_combinations = np.count_nonzero(matrix_data)
-        fill_rate = filled_combinations / total_combinations * 100 if total_combinations > 0 else 0
         
-        # 컬러 그룹별 배경색 추가 (옵션)
-        group_colors = ['lightcyan', 'lightpink', 'lightgreen', 'lightyellow', 'lightcoral']
-        for i, (color, start_idx, end_idx) in enumerate(color_groups):
-            bg_color = group_colors[i % len(group_colors)]
-            # 컬러 그룹 배경 사각형 추가
-            rect = plt.Rectangle((start_idx-0.5, -0.5), end_idx-start_idx+1, len(selected_stores), 
-                               facecolor=bg_color, alpha=0.1, zorder=0)
-            ax.add_patch(rect)
-        
-        stats_text = f"Total Allocated: {total_allocated:,}\nFilled Cells: {filled_combinations}/{total_combinations} ({fill_rate:.1f}%)"
+        stats_text = f"Total Allocated: {total_allocated:,}\nFilled Cells: {filled_combinations}"
         ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=10,
                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         
@@ -454,15 +460,13 @@ Performance Summary
         
         # 요약 정보 출력
         print(f"   📋 매트릭스 요약:")
-        print(f"      표시된 매장: {len(selected_stores)}개 (QTY_SUM 기준)")
-        print(f"      표시된 SKU: {len(selected_skus)}개 (총 배분량 기준)")
+        print(f"      표시된 매장: {len(selected_stores)}개")
+        print(f"      표시된 SKU: {len(selected_skus)}개")
         print(f"      총 배분량: {total_allocated:,}개")
-        print(f"      배분 채움률: {fill_rate:.1f}% ({filled_combinations}/{total_combinations})")
         
         return {
             'selected_stores': selected_stores,
             'selected_skus': selected_skus,
             'matrix_data': matrix_data,
-            'total_allocated': total_allocated,
-            'fill_rate': fill_rate
+            'total_allocated': total_allocated
         }

@@ -26,7 +26,7 @@ def example_2_compare_scenarios():
     print("\n🧪 예시 2: 시나리오 비교")
     
     target_style = "DWLG42044"
-    scenarios_to_test = ["baseline", "coverage_focused", "balance_focused", "hybrid"]
+    scenarios_to_test = ["baseline", "balanced", "random", "high_coverage"]
     
     results = []
     for scenario in scenarios_to_test:
@@ -55,7 +55,7 @@ def example_2_compare_scenarios():
     return results
 
 def example_3_batch_experiments():
-    """예시 3: 배치 실험 (여러 스타일 × 여러 시나리오)"""
+    """예시 3: 배치 실험 (여러 스타일 × 다양한 전략)"""
     print("\n🧪 예시 3: 배치 실험")
     
     # 여러 스타일이 있다고 가정 (실제 데이터에 따라 조정)
@@ -70,10 +70,10 @@ def example_3_batch_experiments():
                      ]  # 현재 사용 가능한 스타일
     scenarios = [
                 "baseline", 
-                 "coverage_focused", 
-                 "balance_focused",
-                 "hybrid",
-                 "extreme_coverage"
+                "balanced", 
+                "random",
+                "high_coverage",
+                "high_coverage_balanced"
                  ]
     
     results = run_batch_experiments(
@@ -130,6 +130,51 @@ def run_custom_experiment(style_code, scenario_name):
     
     return result
 
+def example_5_priority_strategies():
+    """예시 5: 배분 우선순위 전략 비교"""
+    print("\n🧪 예시 5: 배분 우선순위 전략 비교")
+    
+    target_style = "DWLG42044"
+    # 3가지 우선순위 전략 시나리오들
+    strategy_scenarios = [
+        "baseline",      # sequential: 상위 매장 순차적
+        "balanced",      # balanced: 균형 배분  
+        "random"         # random: 완전 랜덤
+    ]
+    
+    results = []
+    for scenario in strategy_scenarios:
+        print(f"\n🔄 {scenario} 전략 실행 중...")
+        result = run_optimization(
+            target_style=target_style,
+            scenario=scenario,
+            show_detailed_output=False,
+            create_visualizations=True
+        )
+        
+        if result:
+            step_analysis = result.get('step_analysis', {})
+            results.append({
+                'scenario': scenario,
+                'step1_objective': step_analysis.get('step1', {}).get('objective', 0),
+                'step2_additional': step_analysis.get('step2', {}).get('additional_allocation', 0),
+                'total_time': step_analysis.get('step1', {}).get('time', 0) + step_analysis.get('step2', {}).get('time', 0),
+                'grade': result['analysis_results']['overall_evaluation']['grade'],
+                'score': result['analysis_results']['overall_evaluation']['total_score']
+            })
+    
+    # 결과 비교 분석
+    print(f"\n📊 배분 우선순위 전략 비교 결과:")
+    print("-" * 80)
+    print(f"{'시나리오':15} | {'Step1커버리지':12} | {'Step2배분':10} | {'총시간':8} | {'등급':8} | {'점수':8}")
+    print("-" * 80)
+    
+    for r in results:
+        print(f"{r['scenario']:15} | {r['step1_objective']:12.1f} | {r['step2_additional']:10}개 | "
+              f"{r['total_time']:8.2f}s | {r['grade']:8} | {r['score']:8.3f}")
+    
+    return results
+
 if __name__ == "__main__":
     """실행 예시"""
     print("🎬 실험 예시 스크립트 실행")
@@ -149,8 +194,11 @@ if __name__ == "__main__":
     # 예시 4: 사용자 정의 실험
     # example_4_custom_scenario()
     
+    # 예시 5: 배분 우선순위 전략 비교
+    example_5_priority_strategies()
+    
     # 직접 실험 실행
-    # run_custom_experiment("DWLG42044", "coverage_focused")
+    # run_custom_experiment("DWLG42044", "baseline")
     
     print("\n🎉 예시 스크립트 완료!")
     print("💡 원하는 예시의 주석을 해제하고 실행해보세요!") 

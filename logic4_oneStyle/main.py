@@ -11,9 +11,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from modules import (
     DataLoader, StoreTierSystem, SKUClassifier, 
-    IntegratedOptimizer, ResultAnalyzer,
-    ResultVisualizer, ExperimentManager
+    ResultAnalyzer, ResultVisualizer, ExperimentManager
 )
+from two_step_optimizer import TwoStepOptimizer
 from config import EXPERIMENT_SCENARIOS, DEFAULT_TARGET_STYLE, DEFAULT_SCENARIO
 from modules.objective_analyzer import ObjectiveAnalyzer
 
@@ -59,21 +59,21 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
         if show_detailed_output:
             sku_classifier.print_detailed_summary(data['A'], show_details=True)
         
-        # 4. 통합 MILP 최적화 (Step1 + Step2 통합)
-        print("\n🎯 4단계: 통합 MILP 최적화")
-        integrated_optimizer = IntegratedOptimizer(target_style)
+        # 4. 2-Step 최적화 (Step1: 커버리지 최적화 + Step2: 룰베이스 배분)
+        print("\n🎯 4단계: 2-Step 최적화")
+        two_step_optimizer = TwoStepOptimizer(target_style)
         
         # 시나리오 파라미터 가져오기
         scenario_params = EXPERIMENT_SCENARIOS[scenario].copy()
         
-        optimization_result = integrated_optimizer.optimize_integrated(
+        optimization_result = two_step_optimizer.optimize_two_step(
             data, scarce_skus, abundant_skus, target_stores,
             store_allocation_limits, data_loader.df_sku_filtered,
             tier_system, scenario_params
         )
         
         if optimization_result['status'] != 'success':
-            print("❌ 통합 MILP 최적화 실패")
+            print("❌ 2-Step 최적화 실패")
             return None
         
         final_allocation = optimization_result['final_allocation']
@@ -147,36 +147,46 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
                 print(f"⚠️ 시각화 생성 중 오류: {str(e)}")
                 print("   (시각화 오류는 전체 프로세스에 영향을 주지 않습니다)")
         
-        # ✅ 목적함수 분해 분석 추가
+        # ✅ 2-Step 분해 분석 추가
         if optimization_result['status'] == 'success':
             try:
-                # 목적함수 분해 정보 추출
-                objective_breakdown = integrated_optimizer.get_objective_breakdown()
+                # 2-Step 분해 정보 추출
+                step_analysis = two_step_optimizer.get_step_analysis()
                 
-                print(f"📊 목적함수 분해 결과:")
-                print(f"   커버리지 항: {objective_breakdown.get('coverage_term', 0):,.1f}")
-                print(f"   배분량 항: {objective_breakdown.get('allocation_term', 0):,.1f}")
-                print(f"   효율성 항: {objective_breakdown.get('efficiency_term', 0):,.1f}")
-                print(f"   희소 보너스: {objective_breakdown.get('scarce_bonus', 0):,.1f}")
-                print(f"   균형 페널티: {objective_breakdown.get('balance_penalty', 0):,.1f}")
-                print(f"   → 총 목적함수: {objective_breakdown.get('total_objective', 0):,.1f}")
+                print(f"📊 2-Step 분해 결과:")
+                print(f"   🎯 Step1 - 커버리지 최적화:")
+                print(f"       커버리지 점수: {step_analysis['step1']['objective']:.1f}")
+                print(f"       선택된 SKU-매장 조합: {step_analysis['step1']['combinations']}개")
+                print(f"       소요 시간: {step_analysis['step1']['time']:.2f}초")
+                print(f"   📦 Step2 - 룰베이스 배분:")
+                print(f"       추가 배분량: {step_analysis['step2']['additional_allocation']}개")
+                print(f"       소요 시간: {step_analysis['step2']['time']:.2f}초")
+                print(f"   🎲 배분 우선순위: {scenario_params.get('allocation_priority', 'sequential')}")
+                print(f"   ⏱️ 총 소요시간: {step_analysis['total_time']:.2f}초")
                 
-                # 실험 파라미터에 목적함수 분해 정보 추가
-                optimization_result['objective_breakdown'] = objective_breakdown
+                # 배분 우선순위 설명
+                from config import ALLOCATION_PRIORITY_OPTIONS
+                allocation_priority = scenario_params.get('allocation_priority', 'sequential')
+                if allocation_priority in ALLOCATION_PRIORITY_OPTIONS:
+                    priority_info = ALLOCATION_PRIORITY_OPTIONS[allocation_priority]
+                    print(f"       └ {priority_info['name']}: {priority_info['description']}")
+                
+                # 2-Step 분해 정보를 결과에 추가
+                optimization_result['step_analysis'] = step_analysis
                 
             except Exception as e:
-                print(f"⚠️ 목적함수 분해 분석 실패: {e}")
-                optimization_result['objective_breakdown'] = {}
+                print(f"⚠️ 2-Step 분해 분석 실패: {e}")
+                optimization_result['step_analysis'] = {}
         
         # 9. 최종 요약 출력
         print("\n" + "="*50)
-        print("         🎉 통합 MILP 최적화 완료!")
+        print("         🎉 2-Step 최적화 완료!")
         print("="*50)
         
         overall_eval = analysis_results['overall_evaluation']
         print(f"📊 최종 결과:")
         print(f"   🎯 대상 스타일: {target_style}")
-        print(f"   🚀 통합 MILP 사용")
+        print(f"   🚀 2-Step 사용")
         print(f"   📈 종합 등급: {overall_eval['grade']}")
         print(f"   📊 종합 점수: {overall_eval['total_score']:.3f}")
         print(f"   📁 결과 저장: {experiment_path}")
@@ -191,7 +201,7 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
             'df_results': df_results,
             'experiment_path': experiment_path,
             'file_paths': file_paths,
-            'objective_breakdown': optimization_result.get('objective_breakdown', {})
+            'step_analysis': optimization_result.get('step_analysis', {})
         }
         
     except Exception as e:
@@ -243,21 +253,21 @@ def run_batch_experiments(target_styles=None, scenarios=None, create_visualizati
                 print(f"✅ 완료: {target_style} - {scenario}")
                 
                 # 목적함수 분석용 데이터 준비
-                objective_breakdown = result.get('objective_breakdown', {})
-                if objective_breakdown:
+                step_analysis = result.get('step_analysis', {})
+                if step_analysis:
                     # 시나리오 파라미터 추출
                     scenario_config = EXPERIMENT_SCENARIOS.get(scenario, {})
                     
                     objective_data.append({
                         'scenario': f"{scenario}_{target_style}",
-                        'objective': objective_breakdown.get('total_objective', 0),
-                        'breakdown': objective_breakdown,
+                        'objective': step_analysis['step1']['objective'],  # Step1 커버리지만 사용
+                        'breakdown': step_analysis,
                         'coverage_weight': scenario_config.get('coverage_weight', 1.0),
                         'balance_penalty_weight': scenario_config.get('balance_penalty', 0.1),
                         'experiment_result': result
                     })
                 
-                print(f"   ✅ 실험 완료 - 목적함수: {objective_breakdown.get('total_objective', 0):,.1f}")
+                print(f"   ✅ 실험 완료 - Step1 커버리지: {step_analysis['step1']['objective']:.1f}, Step2 추가배분: {step_analysis['step2']['additional_allocation']}개")
             else:
                 print(f"❌ 실패: {target_style} - {scenario}")
     
@@ -313,11 +323,18 @@ if __name__ == "__main__":
     print("="*50)
     
     # 기본 설정으로 단일 실험 실행
+    """
+    baseline: 상위 매장 순차적 배분 (QTY_SUM 높은 순서)
+    balanced: 균형 배분 (상위 매장 우선하되 중간 매장도 기회 제공)
+    random: 완전 랜덤 배분 (모든 매장 동일 확률)
+    high_coverage: 고커버리지 + 상위 매장 순차적 배분
+    high_coverage_balanced: 고커버리지 + 균형 배분
+    """
     result = run_optimization(target_style='DWLG42044', 
-                              scenario='hybrid')
+                              scenario='baseline')
     
     # result = run_batch_experiments(['DWLG42044'], 
-    #                                ['baseline', 'extreme_coverage'])
+    #                                ['baseline', 'balanced', 'random'])
     
     # 실험 목록 출력
     print("\n" + "="*50)
@@ -325,7 +342,8 @@ if __name__ == "__main__":
     
     # 사용법 안내
     print("\n💡 사용법:")
-    print("   단일 실험: run_optimization(target_style='DWLG42044', scenario='extreme_coverage')")
-    print("   배치 실험: run_batch_experiments(['DWLG42044'], ['baseline', 'extreme_coverage'])")
+    print("   단일 실험: run_optimization(target_style='DWLG42044', scenario='baseline')")
+    print("   배치 실험: run_batch_experiments(['DWLG42044'], ['baseline', 'balanced', 'random'])")
     print("   실험 목록: list_saved_experiments()")
-    print("   다른 스타일: config.py에서 설정 변경 가능") 
+    print("   다른 스타일: config.py에서 설정 변경 가능")
+    print("   사용 가능한 시나리오: baseline, balanced, random, high_coverage, high_coverage_balanced") 

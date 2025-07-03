@@ -9,6 +9,7 @@ from pulp import (
 )
 import numpy as np
 import time
+import math
 
 
 class IntegratedOptimizer:
@@ -45,6 +46,9 @@ class IntegratedOptimizer:
         K_s = data['K_s']
         L_s = data['L_s']
         QSUM = data['QSUM']
+        
+        # tier_system을 인스턴스 변수로 저장
+        self.tier_system = tier_system
         
         print(f"🎯 통합 MILP 최적화 시작 (스타일: {self.target_style})")
         print(f"   전체 SKU: {len(SKUs)}개 (희소: {len(scarce_skus)}개, 충분: {len(abundant_skus)}개)")
@@ -196,32 +200,230 @@ class IntegratedOptimizer:
     
     def _set_integrated_objective(self, x, color_coverage, size_coverage, tier_balance_vars,
                                 SKUs, stores, target_stores, scenario_params, A, QSUM):
-        """통합 목적함수 설정 - 순수 커버리지만"""
+        """개선된 계층적 통합 목적함수 설정 - 1순위: 커버리지, 2순위: 계층적 공평성/동적 효율성, 3순위: 배분량 최대화"""
+        import math
+        
         s = self.target_style
         
         # 가중치 추출
         coverage_weight = scenario_params['coverage_weight']
+        equity_weight = scenario_params.get('equity_weight', 0.5)
+        efficiency_weight = scenario_params.get('efficiency_weight', 0.5)
+        allocation_priority = scenario_params.get('allocation_priority', 'balanced')
         
-        # 순수 커버리지만 최대화
-        coverage_term = coverage_weight * lpSum(
+        # 파라미터 정규화 (equity_weight + efficiency_weight = 1)
+        total_secondary = equity_weight + efficiency_weight
+        if total_secondary > 0:
+            equity_weight = equity_weight / total_secondary
+            efficiency_weight = efficiency_weight / total_secondary
+        
+        # 1순위: 커버리지 최대화 (매우 큰 가중치)
+        coverage_term = 1000 * coverage_weight * lpSum(
             color_coverage[(s,j)] + size_coverage[(s,j)] 
             for j in stores if isinstance(color_coverage[(s,j)], LpVariable)
         )
         
-        # 목적함수: 커버리지만
-        self.prob += coverage_term
+        # 2순위: 개선된 계층적 공평성 - 단계별 매장 커버리지 + 추가 배분 인센티브
+        equity_term = 0
+        if equity_weight > 0:
+            # 각 매장별 받은 SKU 개수 변수들
+            store_sku_counts = {}
+            store_coverage_binaries = {}
+            
+            for j in target_stores:
+                # 매장별 총 SKU 개수 계산
+                store_total_skus = lpSum(
+                    x[i][j] for i in SKUs if isinstance(x[i][j], LpVariable)
+                )
+                store_sku_counts[j] = store_total_skus
+                
+                # 1단계: 최소 1개 SKU 받은 매장 (기본 생존권)
+                basic_coverage_binary = LpVariable(f"basic_cov_{j}", cat=LpBinary)
+                self.prob += store_total_skus >= basic_coverage_binary
+                self.prob += store_total_skus <= 100 * basic_coverage_binary  # Big-M
+                
+                # 2단계: 최소 2개 SKU 받은 매장 (향상된 서비스)
+                enhanced_coverage_binary = LpVariable(f"enhanced_cov_{j}", cat=LpBinary)
+                self.prob += store_total_skus >= 2 * enhanced_coverage_binary
+                self.prob += store_total_skus <= 100 * enhanced_coverage_binary + 1  # Big-M + slack
+                
+                # 3단계: 최소 3개 SKU 받은 매장 (프리미엄 서비스)
+                premium_coverage_binary = LpVariable(f"premium_cov_{j}", cat=LpBinary)
+                self.prob += store_total_skus >= 3 * premium_coverage_binary
+                self.prob += store_total_skus <= 100 * premium_coverage_binary + 2  # Big-M + slack
+                
+                store_coverage_binaries[j] = {
+                    'basic': basic_coverage_binary,
+                    'enhanced': enhanced_coverage_binary,
+                    'premium': premium_coverage_binary
+                }
+            
+            # 계층적 공평성 점수: 1000:100:10 비율
+            basic_coverage_sum = lpSum(store_coverage_binaries[j]['basic'] for j in target_stores)
+            enhanced_coverage_sum = lpSum(store_coverage_binaries[j]['enhanced'] for j in target_stores)
+            premium_coverage_sum = lpSum(store_coverage_binaries[j]['premium'] for j in target_stores)
+            
+            # 📈 개선: 매장별 실제 SKU 개수도 소량 가산 (3개 이상에서도 인센티브)
+            total_sku_diversity = lpSum(store_sku_counts[j] for j in target_stores)
+            
+            equity_term = equity_weight * (
+                1000 * basic_coverage_sum +
+                100 * enhanced_coverage_sum +
+                10 * premium_coverage_sum +
+                0.1 * total_sku_diversity  # 매장당 SKU 다양성 보너스
+            )
         
-        print(f"   📊 순수 커버리지 목적함수:")
-        print(f"      🎯 커버리지 항 (가중치: {coverage_weight}) - 유일한 목적함수")
-        print(f"      ⚠️  여러 최적해가 존재할 수 있으며, solver가 그 중 하나를 선택합니다")
+        # 2순위: 개선된 동적 가중치 효율성 - 매장 규모 대비 배분량
+        efficiency_term = 0
+        if efficiency_weight > 0:
+            max_qsum = max(QSUM.values()) if QSUM.values() else 1
+            
+            efficiency_components = []
+            for j in target_stores:
+                # 동적 가중치: 매장 규모를 로그 스케일로 정규화
+                qsum_weight = math.log(QSUM[j] + 1) / math.log(max_qsum + 1)
+                
+                # 매장별 총 배분량
+                store_total_allocation = lpSum(
+                    x[i][j] for i in SKUs if isinstance(x[i][j], LpVariable)
+                )
+                
+                # 동적 가중치 × 배분량
+                efficiency_components.append(qsum_weight * store_total_allocation)
+            
+            efficiency_term = efficiency_weight * lpSum(efficiency_components)
+        
+        # 3순위: 배분량 최대화 (배분 우선순위 옵션 적용)
+        allocation_term = self._create_allocation_maximization_term(
+            x, SKUs, target_stores, allocation_priority, QSUM
+        )
+        
+        # 최종 목적함수: 계층적 구조 (배분량 최대화 항 추가)
+        self.prob += coverage_term + equity_term + efficiency_term + allocation_term
+        
+        print(f"   📊 개선된 계층적 목적함수 구성:")
+        print(f"      🎯 1순위 - 커버리지 최대화 (가중치: {1000 * coverage_weight})")
+        print(f"      ⚖️  2순위 - 계층적 공평성 (가중치: {equity_weight:.3f})")
+        print(f"          └ 1단계(기본): 1000점 × 1개이상받은매장수")
+        print(f"          └ 2단계(향상): 100점 × 2개이상받은매장수") 
+        print(f"          └ 3단계(프리미엄): 10점 × 3개이상받은매장수")
+        print(f"          └ 📈 다양성 보너스: 0.1점 × 매장별SKU개수 (3개 이상에서도 인센티브)")
+        print(f"      📈 2순위 - 동적 효율성 (가중치: {efficiency_weight:.3f})")
+        print(f"          └ 매장별 QTY_SUM 정규화 가중치 × 배분량")
+        print(f"          └ 큰 매장일수록 높은 가중치 (로그 스케일 정규화)")
+        print(f"      📦 3순위 - 배분량 최대화 (우선순위: {allocation_priority})")
+        print(f"          └ 남은 재고를 우선순위에 따라 추가 배분")
+        
+        # 배분 우선순위 설명 출력
+        from config import ALLOCATION_PRIORITY_OPTIONS
+        if allocation_priority in ALLOCATION_PRIORITY_OPTIONS:
+            priority_info = ALLOCATION_PRIORITY_OPTIONS[allocation_priority]
+            print(f"          └ {priority_info['name']}: {priority_info['description']}")
+        
+        if equity_weight > efficiency_weight:
+            print(f"      → 공평성 우선: 모든 매장이 최소한 받는 것 중시")
+        elif efficiency_weight > equity_weight:
+            print(f"      → 효율성 우선: 매출 규모 큰 매장 우선 배분")
+        else:
+            print(f"      → 균형 전략: 공평성과 효율성 동등 고려")
+        print(f"      🔄 배분 최대화: 남은 재고를 우선순위에 따라 추가 배분")
+    
+    def _create_allocation_maximization_term(self, x, SKUs, target_stores, allocation_priority, QSUM):
+        """배분량 최대화 항 생성 (배분 우선순위 옵션 적용)"""
+        import math
+        import random
+        
+        # 배분 우선순위 옵션 정보 가져오기
+        from config import ALLOCATION_PRIORITY_OPTIONS
+        
+        if allocation_priority not in ALLOCATION_PRIORITY_OPTIONS:
+            allocation_priority = 'balanced'  # 기본값
+        
+        priority_config = ALLOCATION_PRIORITY_OPTIONS[allocation_priority]
+        weight_function = priority_config['weight_function']
+        randomness = priority_config['randomness']
+        
+        # 매장별 가중치 계산
+        store_weights = {}
+        max_qsum = max(QSUM.values()) if QSUM.values() else 1
+        
+        for i, store in enumerate(target_stores):
+            base_weight = 1.0
+            qsum_normalized = QSUM[store] / max_qsum
+            
+            # 기본 가중치 함수 적용
+            if weight_function == 'linear_descending':
+                # 상위 매장일수록 높은 가중치 (선형)
+                base_weight = 1.0 - (i / len(target_stores))
+            elif weight_function == 'log_descending':
+                # 상위 매장일수록 높은 가중치 (로그)
+                base_weight = math.log(len(target_stores) - i + 1) / math.log(len(target_stores) + 1)
+            elif weight_function == 'sqrt_descending':
+                # 상위 매장일수록 높은 가중치 (제곱근)
+                base_weight = math.sqrt(len(target_stores) - i) / math.sqrt(len(target_stores))
+            elif weight_function == 'uniform':
+                # 모든 매장 동일 가중치
+                base_weight = 1.0
+            
+            # 랜덤성 적용
+            if randomness > 0:
+                random_factor = random.uniform(0.5, 1.5)  # 0.5 ~ 1.5 사이 랜덤
+                base_weight = base_weight * (1 - randomness) + random_factor * randomness
+            
+            store_weights[store] = base_weight
+        
+        # 가중치 정규화 (합이 1이 되도록)
+        total_weight = sum(store_weights.values())
+        if total_weight > 0:
+            for store in store_weights:
+                store_weights[store] /= total_weight
+        
+        # 배분량 최대화 항 생성 (낮은 가중치로 3순위 유지)
+        allocation_components = []
+        for store in target_stores:
+            store_weight = store_weights[store]
+            store_total_allocation = lpSum(
+                x[i][store] for i in SKUs if isinstance(x[i][store], LpVariable)
+            )
+            allocation_components.append(store_weight * store_total_allocation)
+        
+        # 3순위로 낮은 가중치 (1.0)
+        return 1.0 * lpSum(allocation_components)
+    
+    def _get_store_tier_info_safe(self, store, target_stores):
+        """안전한 매장 tier 정보 가져오기"""
+        try:
+            # 기존 tier_system 사용 시도
+            if hasattr(self, 'tier_system'):
+                return self.tier_system.get_store_tier_info(store, target_stores)
+            
+            # tier_system이 없으면 인덱스 기반으로 계산
+            store_index = target_stores.index(store)
+            total_stores = len(target_stores)
+            
+            if store_index < total_stores * 0.3:
+                return {'tier_name': 'TIER_1_HIGH', 'max_sku_limit': 3}
+            elif store_index < total_stores * 0.5:
+                return {'tier_name': 'TIER_2_MEDIUM', 'max_sku_limit': 2}
+            else:
+                return {'tier_name': 'TIER_3_LOW', 'max_sku_limit': 1}
+        except:
+            # 기본값 반환
+            return {'tier_name': 'TIER_3_LOW', 'max_sku_limit': 1}
     
     def _add_supply_constraints(self, x, SKUs, stores, A):
-        """공급량 제약조건"""
+        """공급량 제약조건 (강제 배분 제약 제거)"""
+        
+        # 공급량 상한 제약만 유지
         for i in SKUs:
             total_allocation = lpSum(
                 x[i][j] for j in stores if isinstance(x[i][j], LpVariable)
             )
             self.prob += total_allocation <= A[i]
+        
+        print(f"   📦 공급량 제약 설정:")
+        print(f"      각 SKU별 공급량 상한 제약만 적용 (≤ {sum(A.values()):,}개)")
+        print(f"      강제 배분 제약 제거 - 남은 재고는 우선순위에 따라 추가 배분")
     
     def _add_store_capacity_constraints(self, x, SKUs, stores, target_stores, store_allocation_limits):
         """매장별 용량 제약조건"""
@@ -461,19 +663,35 @@ class IntegratedOptimizer:
             print(f"         - 휴리스틱 초기해 제공")
     
     def get_objective_breakdown(self):
-        """목적함수 구성요소별 값 분해 분석 (순수 커버리지만)"""
+        """개선된 목적함수 구성요소별 값 분해 분석 (계층적 공평성 + 동적 효율성 + 배분량 최대화)"""
+        import math
+        
         if not self.optimization_vars or self.prob.status != 1:
             print("❌ 최적화가 완료되지 않았거나 최적해가 없습니다.")
             return {}
         
         # 저장된 변수들 불러오기
+        x = self.optimization_vars['x']
         color_coverage = self.optimization_vars['color_coverage']
         size_coverage = self.optimization_vars['size_coverage']
         target_stores = self.optimization_vars['target_stores']
+        SKUs = self.optimization_vars['SKUs']
+        stores = self.optimization_vars['stores']
+        QSUM = self.optimization_vars['QSUM']
+        A = self.optimization_vars['A']
         
         coverage_weight = self.last_scenario_params.get('coverage_weight', 1.0)
+        equity_weight = self.last_scenario_params.get('equity_weight', 0.5)
+        efficiency_weight = self.last_scenario_params.get('efficiency_weight', 0.5)
+        allocation_priority = self.last_scenario_params.get('allocation_priority', 'balanced')
         
-        # 커버리지 항 계산
+        # 파라미터 정규화
+        total_secondary = equity_weight + efficiency_weight
+        if total_secondary > 0:
+            equity_weight = equity_weight / total_secondary
+            efficiency_weight = efficiency_weight / total_secondary
+        
+        # 1순위: 커버리지 항 계산
         coverage_term_value = 0
         s = self.target_style
         for j in target_stores:
@@ -481,10 +699,153 @@ class IntegratedOptimizer:
                 coverage_term_value += color_coverage[(s,j)].value()
             if isinstance(size_coverage[(s,j)], LpVariable) and size_coverage[(s,j)].value() is not None:
                 coverage_term_value += size_coverage[(s,j)].value()
-        coverage_term_value *= coverage_weight
+        coverage_term_value *= 1000 * coverage_weight
+        
+        # 2순위: 계층적 공평성 항 계산 (다양성 보너스 포함)
+        equity_term_value = 0
+        basic_coverage_count = 0  # 1개 이상 받은 매장 수
+        enhanced_coverage_count = 0  # 2개 이상 받은 매장 수  
+        premium_coverage_count = 0  # 3개 이상 받은 매장 수
+        total_sku_diversity = 0  # 매장별 SKU 개수 총합
+        
+        if equity_weight > 0:
+            for j in target_stores:
+                # 매장별 총 SKU 개수 계산
+                store_total_skus = 0
+                for i in SKUs:
+                    if isinstance(x[i][j], LpVariable) and x[i][j].value() is not None:
+                        store_total_skus += x[i][j].value()
+                
+                total_sku_diversity += store_total_skus
+                
+                # 계층별 카운트
+                if store_total_skus >= 1:
+                    basic_coverage_count += 1
+                if store_total_skus >= 2:
+                    enhanced_coverage_count += 1
+                if store_total_skus >= 3:
+                    premium_coverage_count += 1
+            
+            # 계층적 공평성 점수 계산 (다양성 보너스 포함)
+            equity_term_value = equity_weight * (
+                1000 * basic_coverage_count +
+                100 * enhanced_coverage_count +
+                10 * premium_coverage_count +
+                0.1 * total_sku_diversity  # 다양성 보너스
+            )
+        
+        # 2순위: 동적 효율성 항 계산
+        efficiency_term_value = 0
+        total_weighted_allocation = 0  # 가중치 적용된 총 배분량
+        
+        if efficiency_weight > 0:
+            max_qsum = max(QSUM.values()) if QSUM.values() else 1
+            
+            for j in target_stores:
+                # 동적 가중치 계산
+                qsum_weight = math.log(QSUM[j] + 1) / math.log(max_qsum + 1)
+                
+                # 매장별 총 배분량
+                store_total_allocation = 0
+                for i in SKUs:
+                    if isinstance(x[i][j], LpVariable) and x[i][j].value() is not None:
+                        store_total_allocation += x[i][j].value()
+                
+                # 가중치 적용
+                weighted_allocation = qsum_weight * store_total_allocation
+                total_weighted_allocation += weighted_allocation
+            
+            efficiency_term_value = efficiency_weight * total_weighted_allocation
+        
+        # 3순위: 배분량 최대화 항 계산
+        allocation_term_value = 0
+        total_allocated = 0  # 총 배분량
+        priority_weighted_allocation = 0  # 우선순위 가중치 적용된 배분량
+        
+        # 배분 우선순위 정보 가져오기
+        from config import ALLOCATION_PRIORITY_OPTIONS
+        if allocation_priority in ALLOCATION_PRIORITY_OPTIONS:
+            priority_config = ALLOCATION_PRIORITY_OPTIONS[allocation_priority]
+            weight_function = priority_config['weight_function']
+            randomness = priority_config['randomness']
+            
+            # 매장별 가중치 계산 (분석용)
+            store_weights = {}
+            for i, store in enumerate(target_stores):
+                base_weight = 1.0
+                
+                if weight_function == 'linear_descending':
+                    base_weight = 1.0 - (i / len(target_stores))
+                elif weight_function == 'log_descending':
+                    base_weight = math.log(len(target_stores) - i + 1) / math.log(len(target_stores) + 1)
+                elif weight_function == 'sqrt_descending':
+                    base_weight = math.sqrt(len(target_stores) - i) / math.sqrt(len(target_stores))
+                elif weight_function == 'uniform':
+                    base_weight = 1.0
+                
+                store_weights[store] = base_weight
+            
+            # 가중치 정규화
+            total_weight = sum(store_weights.values())
+            if total_weight > 0:
+                for store in store_weights:
+                    store_weights[store] /= total_weight
+            
+            # 우선순위 가중치 적용된 배분량 계산
+            for j in target_stores:
+                store_weight = store_weights[j]
+                store_total_allocation = 0
+                for i in SKUs:
+                    if isinstance(x[i][j], LpVariable) and x[i][j].value() is not None:
+                        store_total_allocation += x[i][j].value()
+                
+                total_allocated += store_total_allocation
+                priority_weighted_allocation += store_weight * store_total_allocation
+        
+        allocation_term_value = 1.0 * priority_weighted_allocation
+        
+        # 최종 목적함수 계산
+        total_objective = coverage_term_value + equity_term_value + efficiency_term_value + allocation_term_value
+        
+        # 배분률 계산
+        total_supply = sum(A.values())
+        allocation_rate = total_allocated / total_supply if total_supply > 0 else 0
+        
+        # 최대 가능 점수 계산
+        max_basic_coverage = len(target_stores)  # 모든 매장이 1개 이상
+        max_enhanced_coverage = len(target_stores)  # 모든 매장이 2개 이상
+        max_premium_coverage = len(target_stores)  # 모든 매장이 3개 이상
+        max_equity_score = 1000 * max_basic_coverage + 100 * max_enhanced_coverage + 10 * max_premium_coverage
         
         return {
             'coverage_term': coverage_term_value,
-            'total_objective': coverage_term_value,
-            'coverage_weight': coverage_weight
+            'equity_term': equity_term_value,
+            'efficiency_term': efficiency_term_value,
+            'allocation_term': allocation_term_value,
+            'total_objective': total_objective,
+            'coverage_weight': coverage_weight,
+            'equity_weight': equity_weight,
+            'efficiency_weight': efficiency_weight,
+            'allocation_priority': allocation_priority,
+            
+            # 계층적 공평성 세부 정보
+            'basic_coverage_count': basic_coverage_count,
+            'enhanced_coverage_count': enhanced_coverage_count,
+            'premium_coverage_count': premium_coverage_count,
+            'total_sku_diversity': total_sku_diversity,
+            'max_basic_coverage': max_basic_coverage,
+            'max_enhanced_coverage': max_enhanced_coverage,
+            'max_premium_coverage': max_premium_coverage,
+            'max_equity_score': max_equity_score,
+            'equity_coverage_rate': (1000 * basic_coverage_count + 100 * enhanced_coverage_count + 10 * premium_coverage_count + 0.1 * total_sku_diversity) / (max_equity_score + 0.1 * len(target_stores) * len(SKUs)) if max_equity_score > 0 else 0,
+            
+            # 동적 효율성 세부 정보
+            'total_weighted_allocation': total_weighted_allocation,
+            'efficiency_coverage_rate': total_weighted_allocation / len(target_stores) if len(target_stores) > 0 else 0,
+            
+            # 배분량 최대화 세부 정보 (새로 추가)
+            'total_allocated': total_allocated,
+            'total_supply': total_supply,
+            'allocation_rate': allocation_rate,
+            'priority_weighted_allocation': priority_weighted_allocation,
         } 

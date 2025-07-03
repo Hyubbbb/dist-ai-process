@@ -93,7 +93,6 @@ class CoverageOptimizer:
     
     def _set_objective(self, color_coverage, size_coverage, b, scarce_skus, stores, target_stores):
         """목적함수 설정"""
-        epsilon = 0.001
         s = self.target_style
         
         # 색상 + 사이즈 커버리지 합계
@@ -104,13 +103,7 @@ class CoverageOptimizer:
             size_coverage[(s,j)] for j in stores if isinstance(size_coverage[(s,j)], LpVariable)
         )
         
-        # 할당량 보너스 (의미가 없는 것 같아서, 주석처리)
-        allocation_bonus = 0 
-        # allocation_bonus = epsilon * lpSum(
-        #     b[i][j] for i in scarce_skus for j in stores if isinstance(b[i][j], LpVariable)
-        # )
-        
-        self.prob += color_coverage_sum + size_coverage_sum + allocation_bonus
+        self.prob += color_coverage_sum + size_coverage_sum
     
     def _add_supply_constraints(self, b, scarce_skus, stores, A):
         """공급량 제약조건"""

@@ -102,7 +102,7 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
         scenario_params['target_style'] = target_style
         
         # 시나리오 이름 생성 (스타일 포함)
-        scenario_name = f"{scenario}_{target_style}"
+        scenario_name = f"{target_style}_{scenario}"
         
         # 출력 경로 생성
         experiment_path, file_paths = experiment_manager.create_experiment_output_path(scenario_name)

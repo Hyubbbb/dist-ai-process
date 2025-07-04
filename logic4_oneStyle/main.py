@@ -123,24 +123,11 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
                 import os
                 visualization_dir = experiment_path
 
-                comprehensive_chart_path = os.path.join(visualization_dir, f"{scenario_name}_comprehensive_analysis.png")
-                summary_chart_path = os.path.join(visualization_dir, f"{scenario_name}_summary_chart.png")
-
                 # Step별 allocation matrix 경로 (Step1/Step2/Step3)
                 matrix_step1_path = os.path.join(visualization_dir, f"{scenario_name}_step1_allocation_matrix.png")
                 matrix_step2_path = os.path.join(visualization_dir, f"{scenario_name}_step2_allocation_matrix.png")
                 matrix_step3_path = os.path.join(visualization_dir, f"{scenario_name}_step3_allocation_matrix.png")
-                
-                # 종합 시각화 (PNG로 저장)
-                visualizer.create_comprehensive_visualization(
-                    analysis_results, target_style, save_path=comprehensive_chart_path
-                )
-                
-                # 간단 요약 차트 (PNG로 저장)  
-                visualizer.create_simple_summary_chart(
-                    analysis_results, save_path=summary_chart_path
-                )
-                
+
                 # 배분 매트릭스 히트맵 (Step1, Step2, Step3) - 100개 매장 모두 표시
 
                 # Step1
@@ -192,16 +179,11 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
                 print(f"   📦 Step3 - 잔여 수량 추가 배분:")
                 print(f"       추가 배분량: {step_analysis['step3']['additional_allocation']}개")
                 print(f"       소요 시간: {step_analysis['step3']['time']:.2f}초")
-                print(f"   🎲 Step2 우선순위: {scenario_params.get('allocation_priority_step2', scenario_params.get('allocation_priority', 'balanced'))}")
-                print(f"   🎲 Step3 우선순위: {scenario_params.get('allocation_priority_step3', scenario_params.get('allocation_priority', 'balanced'))}")
                 print(f"   ⏱️ 총 소요시간: {step_analysis['total_time']:.2f}초")
                 
                 # 배분 우선순위 설명
-                from config import ALLOCATION_PRIORITY_OPTIONS
-                allocation_priority = scenario_params.get('allocation_priority', 'sequential')
-                if allocation_priority in ALLOCATION_PRIORITY_OPTIONS:
-                    priority_info = ALLOCATION_PRIORITY_OPTIONS[allocation_priority]
-                    print(f"       └ {priority_info['name']}: {priority_info['description']}")
+                if 'priority_temperature' in scenario_params:
+                    print(f"   🌀 Priority Temperature: {scenario_params['priority_temperature']}")
                 
                 # 3-Step 분해 정보를 결과에 추가
                 optimization_result['step_analysis'] = step_analysis
@@ -357,34 +339,18 @@ if __name__ == "__main__":
     # 기본 설정으로 단일 실험 실행
     """
     시나리오 종류
-    baseline: 상위 매장 순차적 배분 (QTY_SUM 높은 순서)
-        - Step2 우선순위: sequential
-        - Step3 우선순위: sequential
-    balanced: 균형 배분 (상위 매장 우선 * 중간 매장도 기회 제공)
-        - Step2 우선순위: balanced
-        - Step3 우선순위: balanced
-    random: 완전 랜덤 배분 (모든 매장 동일 확률)
-        - Step2 우선순위: random
-        - Step3 우선순위: random
-    three_step_fair: 공평: 미배분 매장 우선
-        - Step2 우선순위: balanced_unfilled
-        - Step3 우선순위: balanced_unfilled
-    my_custom: 커스텀 3-Step: Step2는 랜덤으로 미배분 매장 우선, Step3는 순차적 배분
-        - Step2 우선순위: random_unfilled
-        - Step3 우선순위: sequential
+    deterministic: 결정론적 배분
 
+    temperature_0.5: temperature 0.5
 
-    2. 우선순위 옵션
-    sequential: 순차적 배분 (QTY_SUM 높은 순서)
     random: 랜덤 배분
-    balanced: 균형 배분
-    
-    sequential_unfilled: 순차적 배분 (미배분 매장 우선)
-    random_unfilled: 랜덤 배분 (미배분 매장 우선)
-    balanced_unfilled: 균형 배분 (미배분 매장 우선)
+
+    original_coverage: 기존 커버리지 방식 테스트 (색상 + 사이즈 커버리지 단순 합산)
+
+    normalized_coverage: 정규화 커버리지 방식 테스트 (스타일별 색상/사이즈 개수 반영)
     """
     result = run_optimization(target_style='DWLG42044', 
-                              scenario='my_custom')
+                              scenario='deterministic')
     
     # result = run_batch_experiments(['DWLG42044'], 
     #                                ['baseline', 'balanced', 'random'])

@@ -51,8 +51,8 @@ class ThreeStepOptimizer:
         print(f"🎯 3-Step 최적화 시작 (스타일: {self.target_style})")
         print(f"   전체 SKU: {len(SKUs)}개")
         print(f"   대상 매장: {len(target_stores)}개")
-        print(f"   Step2 우선순위: {scenario_params.get('allocation_priority_step2', 'balanced')}")
-        print(f"   Step3 우선순위: {scenario_params.get('allocation_priority_step3', 'balanced')}")
+        if 'priority_temperature' in scenario_params:
+            print(f"   우선순위 temperature: {scenario_params['priority_temperature']}")
         
         # Step 1: 바이너리 커버리지 최적화
         step1_result = self._step1_coverage_optimization(
@@ -171,9 +171,8 @@ class ThreeStepOptimizer:
         self.final_allocation = step1_allocation.copy()
         
         # 매장 우선순위 계산
-        allocation_priority = scenario_params.get('allocation_priority_step2', 
-                                                scenario_params.get('allocation_priority', 'balanced'))
-        store_priority_weights = self._calculate_store_priorities(target_stores, data['QSUM'], allocation_priority)
+        priority_temperature = scenario_params.get('priority_temperature', 0.0)
+        store_priority_weights = self._calculate_store_priorities(target_stores, data['QSUM'], priority_temperature)
         
         total_additional = 0
         
@@ -248,9 +247,8 @@ class ThreeStepOptimizer:
         self.final_allocation = step2_allocation.copy()
         
         # 우선순위 가중치 계산
-        allocation_priority = scenario_params.get('allocation_priority_step3', 
-                                                scenario_params.get('allocation_priority', 'balanced'))
-        store_priority_weights = self._calculate_store_priorities(target_stores, data['QSUM'], allocation_priority)
+        priority_temperature = scenario_params.get('priority_temperature', 0.0)
+        store_priority_weights = self._calculate_store_priorities(target_stores, data['QSUM'], priority_temperature)
         
         total_additional = 0
         
@@ -483,43 +481,37 @@ class ThreeStepOptimizer:
                 else:
                     self.step1_allocation[(i, j)] = 0
     
-    def _calculate_store_priorities(self, target_stores, QSUM, allocation_priority):
-        """매장별 우선순위 가중치 계산"""
-        from config import ALLOCATION_PRIORITY_OPTIONS
-        
-        if allocation_priority not in ALLOCATION_PRIORITY_OPTIONS:
-            allocation_priority = 'balanced'
-        
-        priority_config = ALLOCATION_PRIORITY_OPTIONS[allocation_priority]
-        weight_function = priority_config['weight_function']
-        randomness = priority_config['randomness']
-        
-        store_weights = {}
-        max_qsum = max(QSUM.values()) if QSUM.values() else 1
-        
-        for i, store in enumerate(target_stores):
-            base_weight = 1.0
-            
-            if weight_function == 'linear_descending':
-                base_weight = 1.0 - (i / len(target_stores))
-            elif weight_function == 'log_descending':
-                base_weight = math.log(len(target_stores) - i + 1) / math.log(len(target_stores) + 1)
-            elif weight_function == 'sqrt_descending':
-                base_weight = math.sqrt(len(target_stores) - i) / math.sqrt(len(target_stores))
-            elif weight_function == 'uniform':
-                base_weight = 1.0
-            
-            # 랜덤성 적용
-            if randomness > 0:
-                random_factor = random.uniform(0.5, 1.5)
-                base_weight = base_weight * (1 - randomness) + random_factor * randomness
-            
-            store_weights[store] = base_weight
-        
-        print(f"   🎲 배분 우선순위: {priority_config['name']}")
-        print(f"      가중치 함수: {weight_function}, 랜덤성: {randomness*100:.0f}%")
-        
-        return store_weights
+    def _calculate_store_priorities(self, target_stores, QSUM, priority_temperature=0.0):
+        """매장별 우선순위 가중치 계산
+
+        Args:
+            priority_temperature (float|None): 0~1 사이 값. 0이면 순차적, 1이면 랜덤.
+                                                None이면 기존 allocation_priority 로직 사용.
+        """
+        # alpha 값으로 혼합 가중치 계산 (default 0.0 => 순차적, 1.0 => 완전 랜덤)
+        alpha = max(0.0, min(1.0, float(priority_temperature)))
+        scores = self._compute_mixed_weights(target_stores, QSUM, alpha)
+
+        print(f"   🎲 배분 우선순위: mixed (temperature={alpha:.2f})")
+        return scores
+    
+    def _compute_mixed_weights(self, target_stores, QSUM, alpha):
+        """Deterministic(QSUM)과 Random 사이를 alpha로 혼합한 가중치 계산"""
+        import random
+        # 1) QSUM 정규화 (0~1)
+        q_vals = [QSUM[j] for j in target_stores]
+        qmin, qmax = min(q_vals), max(q_vals)
+        if qmax > qmin:
+            w = {j: (QSUM[j] - qmin)/(qmax - qmin) for j in target_stores}
+        else:
+            w = {j: 1.0 for j in target_stores}
+
+        # 2) 무작위 0~1 값
+        r = {j: random.random() for j in target_stores}
+
+        # 3) 혼합 점수 계산
+        s = {j: (1-alpha)*w[j] + alpha*r[j] for j in target_stores}
+        return s
     
     def _allocate_remaining_sku(self, sku, target_stores, A, tier_system, 
                               store_priority_weights, store_allocation_limits, priority_unfilled):

@@ -261,7 +261,7 @@ Performance Summary
         return fig 
     
     def create_allocation_matrix_heatmap(self, final_allocation, target_stores, SKUs, QSUM, 
-                                       df_sku_filtered, A, tier_system, save_path=None, max_stores=30, max_skus=20):
+                                       df_sku_filtered, A, tier_system, save_path=None, max_stores=30, max_skus=20, fixed_max=None):
         """
         배분 결과를 매장 × SKU 매트릭스 히트맵으로 시각화
         
@@ -276,6 +276,7 @@ Performance Summary
             save_path: 저장 경로 (None이면 화면 표시)  
             max_stores: 표시할 최대 매장 수
             max_skus: 표시할 최대 SKU 수
+            fixed_max: 고정된 최대 배분량 (None이면 자동 계산)
         """
         print("📊 배분 매트릭스 히트맵 생성 중...")
         
@@ -409,13 +410,19 @@ Performance Summary
         
         # 컬러맵: 0은 흰색, 배분량에 따라 색상 진해짐
         matrix_data = np.array(matrix_data)
-        if matrix_data.max() > 0:
-            im = ax.imshow(matrix_data, cmap='Blues', aspect='auto', vmin=0)
+        # 고정된 색상 스케일 고정: fixed_max가 주어지면 그것을 vmax로 사용
+        if fixed_max is not None:
+            vmax_val = fixed_max
         else:
-            im = ax.imshow(matrix_data, cmap='Blues', aspect='auto')
+            vmax_val = matrix_data.max() if matrix_data.max() > 0 else 1  # 최소 1
+        
+        im = ax.imshow(matrix_data, cmap='Blues', aspect='auto', vmin=0, vmax=vmax_val)
         
         # 컬러바 추가
-        cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+        if fixed_max is not None and fixed_max <= 5:
+            cbar = plt.colorbar(im, ax=ax, shrink=0.8, ticks=list(range(0, fixed_max + 1)))
+        else:
+            cbar = plt.colorbar(im, ax=ax, shrink=0.8)
         cbar.set_label('Allocated Quantity', rotation=270, labelpad=15)
         
         # 축 설정

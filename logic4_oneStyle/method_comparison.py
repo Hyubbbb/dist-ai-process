@@ -16,7 +16,7 @@ from modules import (
     DataLoader, StoreTierSystem, SKUClassifier, 
     IntegratedOptimizer, ResultAnalyzer
 )
-from modules.two_step_optimizer import TwoStepOptimizer
+from modules.three_step_optimizer import ThreeStepOptimizer
 from config import EXPERIMENT_SCENARIOS
 
 
@@ -98,16 +98,16 @@ class MethodComparisonExperiment:
                 'error': optimization_result.get('problem_status', 'unknown')
             }
     
-    def run_two_step_method(self, experiment_data, scenario_params):
-        """2-Step 방식 실행"""
-        print(f"\n📊 2-Step 방식 실행 중...")
+    def run_three_step_method(self, experiment_data, scenario_params):
+        """3-Step 방식 실행"""
+        print(f"\n📊 3-Step 방식 실행 중...")
         
         start_time = time.time()
         
-        # 2-Step 최적화
-        two_step_optimizer = TwoStepOptimizer(self.target_style)
+        # 3-Step 최적화
+        three_step_optimizer = ThreeStepOptimizer(self.target_style)
         
-        optimization_result = two_step_optimizer.optimize_two_step(
+        optimization_result = three_step_optimizer.optimize_three_step(
             experiment_data['data'], 
             experiment_data['scarce_skus'], 
             experiment_data['abundant_skus'], 
@@ -122,10 +122,10 @@ class MethodComparisonExperiment:
         
         if optimization_result['status'] == 'success':
             # 단계별 분석
-            step_analysis = two_step_optimizer.get_step_analysis()
+            step_analysis = three_step_optimizer.get_step_analysis()
             
             return {
-                'method': '2_step',
+                'method': '3_step',
                 'status': 'success',
                 'total_time': total_time,
                 'optimization_result': optimization_result,
@@ -134,7 +134,7 @@ class MethodComparisonExperiment:
             }
         else:
             return {
-                'method': '2_step',
+                'method': '3_step',
                 'status': 'failed',
                 'total_time': total_time,
                 'error': optimization_result.get('step', 'unknown')
@@ -154,61 +154,63 @@ class MethodComparisonExperiment:
         # 2. 통합 MILP 방식 실행
         integrated_result = self.run_integrated_milp_method(experiment_data, scenario_params)
         
-        # 3. 2-Step 방식 실행
-        two_step_result = self.run_two_step_method(experiment_data, scenario_params)
+        # 3. 3-Step 방식 실행
+        three_step_result = self.run_three_step_method(experiment_data, scenario_params)
         
         # 4. 결과 비교 출력
-        self._print_comparison_results(integrated_result, two_step_result)
+        self._print_comparison_results(integrated_result, three_step_result)
         
         return {
             'integrated_result': integrated_result,
-            'two_step_result': two_step_result,
+            'three_step_result': three_step_result,
             'experiment_data': experiment_data
         }
     
-    def _print_comparison_results(self, integrated_result, two_step_result):
+    def _print_comparison_results(self, integrated_result, three_step_result):
         """비교 결과 출력"""
         
         print(f"\n🏆 방식별 성능 비교 결과")
         print("="*60)
         
-        if integrated_result['status'] == 'success' and two_step_result['status'] == 'success':
+        if integrated_result['status'] == 'success' and three_step_result['status'] == 'success':
             
             int_opt = integrated_result['optimization_result']
-            ts_opt = two_step_result['optimization_result']
+            ts_opt = three_step_result['optimization_result']
             
             print(f"📊 최적화 성공 - 두 방식 모두 성공")
             print(f"\n⏱️ 계산 시간:")
             print(f"   통합 MILP: {integrated_result['total_time']:.2f}초")
-            print(f"   2-Step: {two_step_result['total_time']:.2f}초")
+            print(f"   3-Step: {three_step_result['total_time']:.2f}초")
             
-            if 'step_analysis' in two_step_result:
-                step = two_step_result['step_analysis']
-                print(f"   2-Step 세부: Step1 {step['step1']['time']:.2f}초 + Step2 {step['step2']['time']:.2f}초")
+            if 'step_analysis' in three_step_result:
+                step = three_step_result['step_analysis']
+                print(f"   3-Step 세부: Step1 {step['step1']['time']:.2f}초 + Step2 {step['step2']['time']:.2f}초 + Step3 {step['step3']['time']:.2f}초")
             
-            speedup = integrated_result['total_time'] / two_step_result['total_time']
+            speedup = integrated_result['total_time'] / three_step_result['total_time']
             if speedup > 1:
-                print(f"   ✅ 2-Step이 {speedup:.1f}배 빠름")
+                print(f"   ✅ 3-Step이 {speedup:.1f}배 빠름")
             else:
                 print(f"   ✅ 통합 MILP가 {1/speedup:.1f}배 빠름")
             
             print(f"\n📦 배분 성과:")
-            print(f"   총 배분량: 통합 {int_opt['total_allocated']:,}개 vs 2-Step {ts_opt['total_allocated']:,}개")
-            print(f"   배분률: 통합 {int_opt['allocation_rate']:.1%} vs 2-Step {ts_opt['allocation_rate']:.1%}")
-            print(f"   배분 매장수: 통합 {int_opt['allocated_stores']}개 vs 2-Step {ts_opt['allocated_stores']}개")
+            print(f"   총 배분량: 통합 {int_opt['total_allocated']:,}개 vs 3-Step {ts_opt['total_allocated']:,}개")
+            print(f"   배분률: 통합 {int_opt['allocation_rate']:.1%} vs 3-Step {ts_opt['allocation_rate']:.1%}")
+            print(f"   배분 매장수: 통합 {int_opt['allocated_stores']}개 vs 3-Step {ts_opt['allocated_stores']}개")
             
-            # 2-Step 세부 정보
+            # 3-Step 세부 정보
             if 'step1_combinations' in ts_opt and 'step2_additional' in ts_opt:
-                print(f"\n🔄 2-Step 세부 분석:")
+                print(f"\n🔄 3-Step 세부 분석:")
                 print(f"   Step1 선택 조합: {ts_opt['step1_combinations']}개")
                 print(f"   Step1 커버리지: {ts_opt['step1_objective']:.1f}")
                 print(f"   Step2 추가 배분: {ts_opt['step2_additional']}개")
+                if 'step3_additional' in ts_opt:
+                    print(f"   Step3 추가 배분: {ts_opt['step3_additional']}개")
             
             # 승자 판정
             if int_opt['allocation_rate'] > ts_opt['allocation_rate']:
                 print(f"\n🏆 배분 효율성 승자: 통합 MILP")
             elif ts_opt['allocation_rate'] > int_opt['allocation_rate']:
-                print(f"\n🏆 배분 효율성 승자: 2-Step")
+                print(f"\n🏆 배분 효율성 승자: 3-Step")
             else:
                 print(f"\n🏆 배분 효율성: 무승부")
             
@@ -216,8 +218,8 @@ class MethodComparisonExperiment:
             print(f"\n💡 객관적 평가:")
             
             # 계산 복잡성
-            if two_step_result['total_time'] < integrated_result['total_time']:
-                print(f"   ✅ 계산 효율성: 2-Step 우수 ({speedup:.1f}배 빠름)")
+            if three_step_result['total_time'] < integrated_result['total_time']:
+                print(f"   ✅ 계산 효율성: 3-Step 우수 ({speedup:.1f}배 빠름)")
             else:
                 print(f"   ✅ 계산 효율성: 통합 MILP 우수 ({1/speedup:.1f}배 빠름)")
             
@@ -225,13 +227,13 @@ class MethodComparisonExperiment:
             if int_opt['total_allocated'] > ts_opt['total_allocated']:
                 print(f"   ✅ 배분 품질: 통합 MILP 우수 ({int_opt['total_allocated'] - ts_opt['total_allocated']}개 더 배분)")
             elif ts_opt['total_allocated'] > int_opt['total_allocated']:
-                print(f"   ✅ 배분 품질: 2-Step 우수 ({ts_opt['total_allocated'] - int_opt['total_allocated']}개 더 배분)")
+                print(f"   ✅ 배분 품질: 3-Step 우수 ({ts_opt['total_allocated'] - int_opt['total_allocated']}개 더 배분)")
             else:
                 print(f"   ✅ 배분 품질: 동일함")
             
             # 커버리지 특성
             if 'step1_objective' in ts_opt:
-                print(f"   📊 커버리지 특성: 2-Step은 순수 커버리지 {ts_opt['step1_objective']:.1f} 달성")
+                print(f"   📊 커버리지 특성: 3-Step은 순수 커버리지 {ts_opt['step1_objective']:.1f} 달성")
             
             # 최적화 특성
             if 'objective_breakdown' in integrated_result:
@@ -246,15 +248,15 @@ class MethodComparisonExperiment:
             print(f"❌ 최적화 실패")
             if integrated_result['status'] != 'success':
                 print(f"   통합 MILP 실패: {integrated_result.get('error', 'unknown')}")
-            if two_step_result['status'] != 'success':
-                print(f"   2-Step 실패: {two_step_result.get('error', 'unknown')}")
+            if three_step_result['status'] != 'success':
+                print(f"   3-Step 실패: {three_step_result.get('error', 'unknown')}")
 
 
 if __name__ == "__main__":
     # 비교 실험 실행
     experiment = MethodComparisonExperiment()
     
-    print("🚀 2-Step vs 통합 MILP 성능 비교 실험")
+    print("🚀 3-Step vs 통합 MILP 성능 비교 실험")
     print("="*50)
     
     # 기본 시나리오로 비교

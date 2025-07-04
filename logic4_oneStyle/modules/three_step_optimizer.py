@@ -1,12 +1,10 @@
 """
-2-Step 배분 최적화 모듈
-Step 1: 바이너리 커버리지 최적화 
-Step 2: 룰베이스 추가 배분
+3-Step 최적화 모듈 (Step1: Coverage MILP + Step2: 1개씩 배분 + Step3: 잔여 배분)
 """
 
 from pulp import (
     LpProblem, LpVariable, LpBinary, LpInteger,
-    LpMaximize, lpSum, PULP_CBC_CMD
+    LpMaximize, lpSum, PULP_CBC_CMD, value
 )
 import numpy as np
 import time
@@ -14,16 +12,22 @@ import random
 import math
 
 
-class TwoStepOptimizer:
-    """2-Step 배분 최적화: 커버리지 우선 + 룰베이스 추가 배분"""
+class ThreeStepOptimizer:
+    """3-Step 최적화를 담당하는 클래스
+    
+    Step 1: 바이너리 커버리지 최적화 (MILP)
+    Step 2: 아직 해당 SKU를 받지 못한 매장에 1개씩 배분 (rule-based)
+    Step 3: 남은 재고를 추가 배분 (rule-based)
+    """
     
     def __init__(self, target_style):
         self.target_style = target_style
         self.step1_prob = None
-        self.step1_allocation = {}  # Step 1 바이너리 결과
-        self.final_allocation = {}  # Step 2 최종 결과
+        self.step1_allocation = {}
+        self.final_allocation = {}
+        self.allocation_after_step2 = {}
         
-        # 분석용 저장 변수
+        # 각 단계별 메트릭
         self.step1_time = 0
         self.step2_time = 0
         self.step3_time = 0
@@ -31,10 +35,12 @@ class TwoStepOptimizer:
         self.step2_additional_allocation = 0
         self.step3_additional_allocation = 0
         
-    def optimize_two_step(self, data, scarce_skus, abundant_skus, target_stores, 
+        print(f"🎯 3-Step 최적화 시스템 초기화 (스타일: {target_style})")
+        
+    def optimize_three_step(self, data, scarce_skus, abundant_skus, target_stores, 
                          store_allocation_limits, df_sku_filtered, tier_system, 
                          scenario_params):
-        """2-Step 최적화 실행 (이제 3개의 내부 단계: Step1-Coverage, Step2-Unfilled1ea, Step3-Remaining)"""
+        """3-Step 최적화 실행"""
         A = data['A']
         stores = data['stores']
         SKUs = data['SKUs']
@@ -42,15 +48,16 @@ class TwoStepOptimizer:
         L_s = data['L_s']
         QSUM = data['QSUM']
         
-        print(f"🎯 2-Step 최적화 시작 (스타일: {self.target_style})")
+        print(f"🎯 3-Step 최적화 시작 (스타일: {self.target_style})")
         print(f"   전체 SKU: {len(SKUs)}개")
         print(f"   대상 매장: {len(target_stores)}개")
-        print(f"   배분 우선순위: {scenario_params.get('allocation_priority', 'balanced')}")
+        print(f"   Step2 우선순위: {scenario_params.get('allocation_priority_step2', 'balanced')}")
+        print(f"   Step3 우선순위: {scenario_params.get('allocation_priority_step3', 'balanced')}")
         
         # Step 1: 바이너리 커버리지 최적화
         step1_result = self._step1_coverage_optimization(
             data, SKUs, stores, target_stores, store_allocation_limits, 
-            df_sku_filtered, K_s, L_s
+            df_sku_filtered, K_s, L_s, scenario_params
         )
         
         if step1_result['status'] != 'success':
@@ -60,181 +67,256 @@ class TwoStepOptimizer:
                 'final_allocation': {}
             }
         
-        # 시나리오별 우선순위 분리 (Step2, Step3)
-        allocation_priority_step2 = scenario_params.get('allocation_priority_step2',
-                                                      scenario_params.get('allocation_priority', 'balanced'))
-        allocation_priority_step3 = scenario_params.get('allocation_priority_step3',
-                                                      scenario_params.get('allocation_priority', 'balanced'))
-        
-        # Step 2: 아직 0개인 매장에 1개씩 추가 배분 (옵션별 우선순위)
-        step2_result = self._step2_rule_based_allocation(
-            data, SKUs, target_stores, tier_system,
-            allocation_priority_step2, QSUM
+        # Step 2: 1개씩 배분
+        print(f"\n📊 Step 2: 미배분 매장 1개씩 배분")
+        step2_result = self._step2_single_allocation(
+            data, SKUs, stores, target_stores, store_allocation_limits, 
+            step1_result['allocation'], scenario_params
         )
         
-        # Step 3: 남은 수량 추가 배분 (여러 개 허용)
-        step3_result = self._step3_additional_allocation(
-            data, SKUs, target_stores, store_allocation_limits,
-            tier_system, allocation_priority_step3, QSUM
+        if step2_result['status'] != 'success':
+            return {'status': 'failed', 'step': 'step2'}
+        
+        # Step 3: 잔여 배분
+        print(f"\n📊 Step 3: 잔여 수량 추가 배분")
+        step3_result = self._step3_remaining_allocation(
+            data, SKUs, stores, target_stores, store_allocation_limits, 
+            step2_result['allocation'], scenario_params
         )
         
-        return self._get_optimization_summary(A, target_stores, step1_result, step2_result, step3_result)
+        return self._get_optimization_summary(data, target_stores, step1_result, step2_result, step3_result)
     
     def _step1_coverage_optimization(self, data, SKUs, stores, target_stores, 
-                                   store_allocation_limits, df_sku_filtered, K_s, L_s):
-        """Step 1: 순수 커버리지 최적화 (바이너리)"""
-        print(f"\n📊 Step 1: 바이너리 커버리지 최적화")
+                                    store_allocation_limits, df_sku_filtered, K_s, L_s, scenario_params):
+        """Step 1: 바이너리 커버리지 최적화"""
+        print(f"📊 Step 1: 바이너리 커버리지 최적화")
         
         start_time = time.time()
         
-        # MILP 문제 생성
-        self.step1_prob = LpProblem(f'Step1_Coverage_{self.target_style}', LpMaximize)
+        # 1. LP 문제 초기화
+        self.step1_prob = LpProblem("Step1_Coverage_Optimization", LpMaximize)
         
-        # 1. 바이너리 변수 생성: b[i][j] ∈ {0,1}
+        # 2. 바이너리 변수 및 커버리지 변수 생성
         b = self._create_binary_variables(SKUs, stores, target_stores)
-        
-        # 2. 커버리지 변수 생성
         color_coverage, size_coverage = self._create_coverage_variables(stores, target_stores, K_s, L_s)
         
-        # 3. 순수 커버리지 목적함수 설정
-        self._set_coverage_objective(color_coverage, size_coverage, stores, target_stores)
+        # 3. 커버리지 목적함수 설정 (스타일별 색상/사이즈 개수 반영)
+        coverage_method = scenario_params.get('coverage_method', 'normalized')
+        
+        if coverage_method == 'original':
+            self._set_coverage_objective_original(color_coverage, size_coverage, stores, target_stores)
+        else:  # normalized (기본값) - 스타일별 색상/사이즈 개수를 반영한 정규화
+            self._set_coverage_objective(color_coverage, size_coverage, stores, target_stores, K_s, L_s)
         
         # 4. 제약조건 추가
         self._add_step1_constraints(b, color_coverage, size_coverage, SKUs, stores, 
                                    target_stores, store_allocation_limits, 
-                                   df_sku_filtered, K_s, L_s, data['A'])
+                                   df_sku_filtered, K_s, L_s, data)
         
         # 5. 최적화 실행
-        print(f"   ⚡ Step 1 최적화 실행 중...")
+        print(f"   🔍 MILP 최적화 시작...")
+        self.step1_prob.solve(PULP_CBC_CMD(msg=0))
         
-        solver = PULP_CBC_CMD(msg=False, timeLimit=300)
-        self.step1_prob.solve(solver=solver)
+        end_time = time.time()
+        self.step1_time = end_time - start_time
         
-        self.step1_time = time.time() - start_time
-        
-        # 6. 결과 저장
-        if self.step1_prob.status == 1:
-            self._save_step1_results(b, SKUs, stores)
+        # 6. 결과 처리
+        if self.step1_prob.status == 1:  # 최적해 찾음
+            print(f"   ✅ Step1 최적화 성공 ({self.step1_time:.2f}초)")
             
-            allocated_combinations = sum(1 for v in self.step1_allocation.values() if v > 0)
-            self.step1_objective = self.step1_prob.objective.value()
+            # 선택된 조합 추출
+            selected_combinations = []
+            for i in SKUs:
+                for j in stores:
+                    if j in target_stores and b[i][j].varValue and b[i][j].varValue > 0.5:
+                        selected_combinations.append((i, j))
             
-            print(f"   ✅ Step 1 완료: {allocated_combinations}개 SKU-매장 조합 선택")
-            print(f"   📊 커버리지 점수: {self.step1_objective:.1f}")
-            print(f"   ⏱️ 소요 시간: {self.step1_time:.2f}초")
+            # 목적함수 값 계산
+            self.step1_objective = value(self.step1_prob.objective)
+            
+            print(f"   📊 Step1 결과:")
+            print(f"      커버리지 점수: {self.step1_objective:.1f}")
+            print(f"      선택된 조합: {len(selected_combinations)}개")
+            
+            # Step1 배분 결과 생성
+            step1_allocation = {}
+            for i, j in selected_combinations:
+                step1_allocation[(i, j)] = 1
+            
+            # Store Step1 allocation for external access (visualization)
+            self.step1_allocation = step1_allocation.copy()
             
             return {
                 'status': 'success',
-                'allocated_combinations': allocated_combinations,
-                'coverage_objective': self.step1_objective
+                'allocation': step1_allocation,
+                'objective': self.step1_objective,
+                'combinations': len(selected_combinations),
+                'time': self.step1_time
             }
         else:
-            print(f"   ❌ Step 1 실패: 상태 {self.step1_prob.status}")
+            print(f"   ❌ Step1 최적화 실패")
             return {
                 'status': 'failed',
-                'problem_status': self.step1_prob.status
+                'time': self.step1_time
             }
     
-    def _step2_rule_based_allocation(self, data, SKUs, target_stores, 
-                                   tier_system, allocation_priority_step2, QSUM):
+    def _step2_single_allocation(self, data, SKUs, stores, target_stores, 
+                                store_allocation_limits, step1_allocation, scenario_params):
         """Step 2: 아직 해당 SKU를 받지 못한 매장에 1개씩만 배분"""
-        print("\n📦 Step 2: 미배분 매장 1개씩 배분")
+        print("📦 Step 2: 미배분 매장 1개씩 배분")
+        
         start_time = time.time()
-        A = data['A']
-
-        # 초기화 (Step1 결과가 self.final_allocation에 포함됨)
-        self.final_allocation = self.step1_allocation.copy()
-
+        
+        # 초기화 (Step1 결과 복사)
+        self.final_allocation = step1_allocation.copy()
+        
         # 매장 우선순위 계산
-        store_priority_weights = self._calculate_store_priorities(target_stores, QSUM, allocation_priority_step2)
-
+        allocation_priority = scenario_params.get('allocation_priority_step2', 
+                                                scenario_params.get('allocation_priority', 'balanced'))
+        store_priority_weights = self._calculate_store_priorities(target_stores, data['QSUM'], allocation_priority)
+        
         total_additional = 0
-
-        for sku in SKUs:
-            # 남은 수량
-            allocated_in_step1 = sum(self.final_allocation.get((sku, store), 0) for store in target_stores)
-            remaining_qty = A[sku] - allocated_in_step1
-            if remaining_qty <= 0:
+        
+        # 각 SKU에 대해 처리
+        for i in SKUs:
+            # 현재 해당 SKU를 받지 못한 매장들 찾기
+            unfilled_stores = []
+            for j in target_stores:
+                if (i, j) not in self.final_allocation or self.final_allocation[(i, j)] == 0:
+                    unfilled_stores.append(j)
+            
+            if not unfilled_stores:
                 continue
-
-            # 후보 매장: 아직 sku를 0개 받은 매장
-            candidates = []
-            for store in target_stores:
-                if self.final_allocation.get((sku, store), 0) > 0:
-                    continue
-                # tier limit 확인 (최대 1개만 배분이므로 limit>=1 suffice)
-                tier_info = tier_system.get_store_tier_info(store, target_stores)
-                if tier_info['max_sku_limit'] < 1:
-                    continue
-                candidates.append((store, store_priority_weights.get(store, 1.0)))
-
-            # 우선순위에 따라 정렬
-            candidates.sort(key=lambda x: x[1], reverse=True)
-
-            for store, _ in candidates:
-                if remaining_qty <= 0:
+                
+            # 남은 수량 계산
+            allocated_quantity = sum(
+                self.final_allocation.get((i, j), 0) 
+                for j in target_stores
+            )
+            remaining_quantity = data['A'][i] - allocated_quantity
+            
+            if remaining_quantity <= 0:
+                continue
+            
+            # 우선순위에 따라 매장 정렬
+            weighted_stores = [
+                (j, store_priority_weights.get(j, 0)) 
+                for j in unfilled_stores
+            ]
+            weighted_stores.sort(key=lambda x: x[1], reverse=True)
+            
+            # 1개씩 배분
+            allocated_this_sku = 0
+            for j, weight in weighted_stores:
+                if allocated_this_sku >= remaining_quantity:
                     break
-                # 1개 배분
-                self.final_allocation[(sku, store)] = 1
-                remaining_qty -= 1
+                    
+                # 매장 한도 확인
+                current_qty = self.final_allocation.get((i, j), 0)
+                max_qty_per_sku = store_allocation_limits.get(j, 0)
+                if current_qty >= max_qty_per_sku:
+                    continue
+                
+                # 배분 실행
+                self.final_allocation[(i, j)] = self.final_allocation.get((i, j), 0) + 1
+                allocated_this_sku += 1
                 total_additional += 1
-
+        
         self.step2_time = time.time() - start_time
         self.step2_additional_allocation = total_additional
-        print(f"   ✅ Step 2 완료: {total_additional}개 추가 배분")
-        print(f"   ⏱️ 소요 시간: {self.step2_time:.2f}초")
-
-        return {'status': 'success', 'additional_allocation': total_additional}
+        
+        # Preserve allocation snapshot after Step2 for visualization
+        self.allocation_after_step2 = self.final_allocation.copy()
+        
+        print(f"   ✅ Step2 완료: {total_additional}개 추가 배분 ({self.step2_time:.2f}초)")
+        
+        return {
+            'status': 'success', 
+            'additional_allocation': total_additional,
+            'allocation': self.final_allocation,
+            'time': self.step2_time
+        }
     
-    def _step3_additional_allocation(self, data, SKUs, target_stores,
-                                   store_allocation_limits, tier_system,
-                                   allocation_priority_step3, QSUM):
+    def _step3_remaining_allocation(self, data, SKUs, stores, target_stores, 
+                                    store_allocation_limits, step2_allocation, scenario_params):
         """Step 3: 남은 재고를 우선순위에 따라 (Tier limit까지) 추가 배분"""
-        print("\n📦 Step 3: 잔여 수량 추가 배분")
+        print("📦 Step 3: 잔여 수량 추가 배분")
+        
         start_time = time.time()
-        A = data['A']
-
+        
+        # 초기화 (Step2 결과 복사)
+        self.final_allocation = step2_allocation.copy()
+        
         # 우선순위 가중치 계산
-        store_priority_weights = self._calculate_store_priorities(target_stores, QSUM, allocation_priority_step3)
-
+        allocation_priority = scenario_params.get('allocation_priority_step3', 
+                                                scenario_params.get('allocation_priority', 'balanced'))
+        store_priority_weights = self._calculate_store_priorities(target_stores, data['QSUM'], allocation_priority)
+        
         total_additional = 0
-
-        for sku in SKUs:
+        
+        # 각 SKU에 대해 처리
+        for i in SKUs:
             # 남은 수량 계산
-            currently_allocated = sum(self.final_allocation.get((sku, store), 0) for store in target_stores)
-            remaining_qty = A[sku] - currently_allocated
-            if remaining_qty <= 0:
+            allocated_quantity = sum(
+                self.final_allocation.get((i, j), 0) 
+                for j in target_stores
+            )
+            remaining_quantity = data['A'][i] - allocated_quantity
+            
+            if remaining_quantity <= 0:
                 continue
-
-            # 후보 매장: tier limit 미만인 매장
-            candidates = []
-            for store in target_stores:
-                tier_info = tier_system.get_store_tier_info(store, target_stores)
-                capacity = tier_info['max_sku_limit'] - self.final_allocation.get((sku, store), 0)
-                if capacity <= 0:
-                    continue
-                candidates.append({'store': store, 'capacity': capacity, 'weight': store_priority_weights.get(store, 1.0)})
-
-            # 우선순위 정렬
-            candidates.sort(key=lambda x: x['weight'], reverse=True)
-
-            for cand in candidates:
-                if remaining_qty <= 0:
+            
+            # 추가 배분 가능한 매장들 찾기
+            eligible_stores = []
+            for j in target_stores:
+                current_qty = self.final_allocation.get((i, j), 0)
+                max_qty_per_sku = store_allocation_limits.get(j, 0)
+                if current_qty < max_qty_per_sku:
+                    eligible_stores.append(j)
+            
+            if not eligible_stores:
+                continue
+                
+            # 우선순위에 따라 매장 정렬
+            weighted_stores = [
+                (j, store_priority_weights.get(j, 0)) 
+                for j in eligible_stores
+            ]
+            weighted_stores.sort(key=lambda x: x[1], reverse=True)
+            
+            # 가능한 만큼 배분
+            for j, weight in weighted_stores:
+                if remaining_quantity <= 0:
                     break
-                allocate_qty = min(remaining_qty, cand['capacity'])
-                if allocate_qty <= 0:
+                
+                # 해당 매장에 추가 배분 가능한 수량 계산
+                current_qty = self.final_allocation.get((i, j), 0)
+                max_qty_per_sku = store_allocation_limits.get(j, 0)
+                available_capacity = max_qty_per_sku - current_qty
+                
+                if available_capacity <= 0:
                     continue
-                current_qty = self.final_allocation.get((sku, cand['store']), 0)
-                self.final_allocation[(sku, cand['store'])] = current_qty + allocate_qty
-                remaining_qty -= allocate_qty
-                total_additional += allocate_qty
-
+                
+                # 배분할 수량 결정
+                allocate_quantity = min(remaining_quantity, available_capacity)
+                
+                # 배분 실행
+                self.final_allocation[(i, j)] = self.final_allocation.get((i, j), 0) + allocate_quantity
+                remaining_quantity -= allocate_quantity
+                total_additional += allocate_quantity
+        
         self.step3_time = time.time() - start_time
+        # Store additional allocation count for step analysis
         self.step3_additional_allocation = total_additional
-        print(f"   ✅ Step 3 완료: {total_additional}개 추가 배분")
-        print(f"   ⏱️ 소요 시간: {self.step3_time:.2f}초")
-
-        return {'status': 'success', 'additional_allocation': total_additional}
+        
+        print(f"   ✅ Step3 완료: {total_additional}개 추가 배분 ({self.step3_time:.2f}초)")
+        
+        return {
+            'status': 'success', 
+            'additional_allocation': total_additional,
+            'allocation': self.final_allocation,
+            'time': self.step3_time
+        }
     
     def _create_binary_variables(self, SKUs, stores, target_stores):
         """바이너리 할당 변수 생성"""
@@ -266,11 +348,41 @@ class TwoStepOptimizer:
         
         return color_coverage, size_coverage
     
-    def _set_coverage_objective(self, color_coverage, size_coverage, stores, target_stores):
-        """순수 커버리지 목적함수 설정"""
+
+    
+    def _set_coverage_objective(self, color_coverage, size_coverage, stores, target_stores, K_s, L_s):
+        """정규화된 커버리지 목적함수 설정 (스타일별 색상/사이즈 개수 반영)"""
         s = self.target_style
         
-        # 색상 + 사이즈 커버리지 합계만 최대화
+        # 스타일별 색상과 사이즈 개수 파악 (스타일마다 다름)
+        total_colors = len(K_s[s])
+        total_sizes = len(L_s[s])
+        
+        # 가중치 정규화 - 스타일별 색상/사이즈 개수를 반영하여 공정한 평가
+        # 예: DWLG42044(색상2, 사이즈4) -> 색상가중치=0.5, 사이즈가중치=0.25
+        # 예: 다른스타일(색상3, 사이즈5) -> 색상가중치=0.333, 사이즈가중치=0.2
+        color_weight = 1.0 / total_colors if total_colors > 0 else 1.0
+        size_weight = 1.0 / total_sizes if total_sizes > 0 else 1.0
+        
+        # 정규화된 커버리지 합계 최대화 (스타일 간 공정 비교 가능)
+        normalized_coverage_sum = lpSum(
+            color_weight * color_coverage[(s,j)] + size_weight * size_coverage[(s,j)]
+            for j in stores if j in target_stores and isinstance(color_coverage[(s,j)], LpVariable)
+        )
+        
+        self.step1_prob += normalized_coverage_sum
+        
+        print(f"   🎯 목적함수: 정규화된 커버리지 최대화 (스타일별 색상/사이즈 개수 반영)")
+        print(f"      색상 가중치: {color_weight:.3f} (총 {total_colors}개 색상)")
+        print(f"      사이즈 가중치: {size_weight:.3f} (총 {total_sizes}개 사이즈)")
+        print(f"      → 각 색상 커버 = {color_weight:.3f}점, 각 사이즈 커버 = {size_weight:.3f}점")
+        print(f"      → 스타일 간 공정한 커버리지 비교 가능")
+
+    def _set_coverage_objective_original(self, color_coverage, size_coverage, stores, target_stores):
+        """원래 커버리지 목적함수 설정 (스타일별 개수 차이 미반영)"""
+        s = self.target_style
+        
+        # 색상 + 사이즈 커버리지 합계만 최대화 (원래 방식)
         coverage_sum = lpSum(
             color_coverage[(s,j)] + size_coverage[(s,j)] 
             for j in stores if j in target_stores and isinstance(color_coverage[(s,j)], LpVariable)
@@ -278,11 +390,13 @@ class TwoStepOptimizer:
         
         self.step1_prob += coverage_sum
         
-        print(f"   🎯 목적함수: 순수 커버리지 최대화 (색상 + 사이즈)")
+        print(f"   🎯 목적함수: 원래 커버리지 최대화 (색상 + 사이즈 단순 합산)")
+        print(f"      ⚠️ 스타일별 색상/사이즈 개수 차이 미반영")
+        print(f"      ⚠️ 사이즈 개수가 많은 스타일이 더 높은 점수를 받음")
     
     def _add_step1_constraints(self, b, color_coverage, size_coverage, SKUs, stores, 
                               target_stores, store_allocation_limits, df_sku_filtered, 
-                              K_s, L_s, A):
+                              K_s, L_s, data):
         """Step 1 제약조건 추가"""
         
         # 1. 각 SKU는 최대 1개만 배분 (바이너리)
@@ -290,21 +404,13 @@ class TwoStepOptimizer:
             sku_allocation = lpSum(
                 b[i][j] for j in stores if isinstance(b[i][j], LpVariable)
             )
-            self.step1_prob += sku_allocation <= A[i]  # 공급량 제한
+            self.step1_prob += sku_allocation <= data['A'][i]  # 공급량 제한
         
-        # 2. 매장별 최대 배분 SKU 수 제한
-        for j in stores:
-            if j in target_stores:
-                store_allocation = lpSum(
-                    b[i][j] for i in SKUs if isinstance(b[i][j], LpVariable)
-                )
-                self.step1_prob += store_allocation <= store_allocation_limits[j]
-        
-        # 3. 커버리지 제약조건
+        # 2. 커버리지 제약조건
         self._add_coverage_constraints_step1(b, color_coverage, size_coverage, SKUs, stores, 
                                            target_stores, K_s, L_s, df_sku_filtered)
         
-        print(f"   📋 제약조건: 바이너리 배분 + 매장별 한도 + 커버리지")
+        print(f"   📋 제약조건: 바이너리 배분 + 커버리지")
     
     def _add_coverage_constraints_step1(self, b, color_coverage, size_coverage, SKUs, stores, 
                                       target_stores, K_s, L_s, df_sku_filtered):
@@ -603,39 +709,52 @@ class TwoStepOptimizer:
         
         return additional_allocated
     
-    def _get_optimization_summary(self, A, target_stores, step1_result, step2_result, step3_result):
+    def _get_optimization_summary(self, data, target_stores, step1_result, step2_result, step3_result):
         """Update summary to include step3 metrics"""
         
         total_allocated = sum(self.final_allocation.values())
-        total_supply = sum(A.values())
+        total_supply = sum(data['A'].values())
         allocation_rate = total_allocated / total_supply if total_supply > 0 else 0
         
         allocated_stores = len(set(store for (sku, store), qty in self.final_allocation.items() if qty > 0))
         
-        print(f"\n✅ 2-Step 최적화 완료!")
-        print(f"   Step 1 커버리지: {step1_result['coverage_objective']:.1f}")
+        print(f"\n✅ 3-Step 최적화 완료!")
+        print(f"   Step 1 커버리지: {step1_result['objective']:.1f}")
         print(f"   Step 2 추가 배분: {step2_result['additional_allocation']}개")
         print(f"   Step 3 추가 배분: {step3_result['additional_allocation']}개")
-        print(f"   총 배분량: {total_allocated:,}개 / {total_supply:,}개 ({allocation_rate:.1%})")
-        print(f"   배분받은 매장: {allocated_stores}개 / {len(target_stores)}개")
-        print(f"   전체 소요 시간: {self.step1_time + self.step2_time + self.step3_time:.2f}초")
         
+        # 최종 배분 결과 설정
+        self.final_allocation = step3_result['allocation']
+        
+        # 총 배분량 계산
+        total_allocated = sum(self.final_allocation.values())
+        
+        # 결과 반환
         return {
             'status': 'success',
-            'total_allocated': total_allocated,
-            'total_supply': total_supply,
-            'allocation_rate': allocation_rate,
-            'allocated_stores': allocated_stores,
             'final_allocation': self.final_allocation,
-            
-            # 2-Step 특별 정보
-            'step1_time': self.step1_time,
-            'step2_time': self.step2_time,
-            'step3_time': self.step3_time,
-            'step1_objective': self.step1_objective,
-            'step2_additional': self.step2_additional_allocation,
+            'total_allocated': total_allocated,
+            'allocation_rate': total_allocated / sum(data['A'].values()) if sum(data['A'].values()) > 0 else 0,
+            'allocated_stores': len(set(j for i, j in self.final_allocation.keys() if self.final_allocation[(i, j)] > 0)),
+            'step1_combinations': step1_result['combinations'],
+            'step1_objective': step1_result['objective'],
+            'step2_additional': step2_result['additional_allocation'],
             'step3_additional': step3_result['additional_allocation'],
-            'step1_combinations': step1_result['allocated_combinations']
+            'step_analysis': {
+                'step1': {
+                    'objective': step1_result['objective'],
+                    'combinations': step1_result['combinations'],
+                    'time': step1_result['time']
+                },
+                'step2': {
+                    'additional_allocation': step2_result['additional_allocation'],
+                    'time': step2_result['time']
+                },
+                'step3': {
+                    'additional_allocation': step3_result['additional_allocation'],
+                    'time': step3_result['time']
+                }
+            }
         }
     
     def get_final_allocation(self):
@@ -643,20 +762,19 @@ class TwoStepOptimizer:
         return self.final_allocation
     
     def get_step_analysis(self):
-        """단계별 분석 정보 반환 (Step3 포함)"""
+        """3-Step 분해 분석 정보 반환"""
         return {
             'step1': {
-                'time': self.step1_time,
                 'objective': self.step1_objective,
-                'combinations': len([v for v in self.step1_allocation.values() if v > 0])
+                'time': self.step1_time,
+                'combinations': len([k for k, v in self.step1_allocation.items() if v > 0]) if hasattr(self, 'step1_allocation') else 0
             },
             'step2': {
-                'time': self.step2_time,
-                'additional_allocation': self.step2_additional_allocation
+                'additional_allocation': self.step2_additional_allocation,
+                'time': self.step2_time
             },
             'step3': {
-                'time': self.step3_time,
-                'additional_allocation': self.step3_additional_allocation
-            },
-            'total_time': self.step1_time + self.step2_time + self.step3_time
+                'additional_allocation': getattr(self, 'step3_additional_allocation', 0),
+                'time': self.step3_time
+            }
         } 

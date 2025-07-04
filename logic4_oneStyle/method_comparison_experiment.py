@@ -17,12 +17,12 @@ from modules import (
     IntegratedOptimizer, ResultAnalyzer,
     ResultVisualizer, ExperimentManager
 )
-from modules.two_step_optimizer import TwoStepOptimizer
+from modules.three_step_optimizer import ThreeStepOptimizer
 from config import EXPERIMENT_SCENARIOS
 
 
 class MethodComparisonExperiment:
-    """두 가지 배분 방식의 실제 성능 비교 실험"""
+    """3-Step vs 통합 MILP 방식의 실제 성능 비교 실험"""
     
     def __init__(self, target_style='DWLG42044'):
         self.target_style = target_style

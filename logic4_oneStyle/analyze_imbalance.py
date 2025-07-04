@@ -1,5 +1,6 @@
 """
-불균형 배분 분석 스크립트
+3-Step 배분 불균형 분석 스크립트
+(Step1: 커버리지 + Step2: 1개씩 배분 + Step3: 잔여 배분)
 """
 
 import pandas as pd

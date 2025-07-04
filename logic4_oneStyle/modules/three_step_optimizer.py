@@ -64,7 +64,7 @@ class ThreeStepOptimizer:
             }
         
         # Step 2: 1개씩 배분
-        print(f"\n📊 Step 2: 미배분 매장 1개씩 배분")
+        print(f"\n📊 Step 2: L2 커버리지 최대화 Rule-based 배분 (미배분 매장 1개씩 배분)")
         step2_result = self._step2_single_allocation(
             data, SKUs, stores, target_stores, store_allocation_limits, 
             step1_result['allocation'], scenario_params
@@ -74,7 +74,7 @@ class ThreeStepOptimizer:
             return {'status': 'failed', 'step': 'step2'}
         
         # Step 3: 잔여 배분
-        print(f"\n📊 Step 3: 잔여 수량 추가 배분")
+        print(f"\n📊 Step 3: 배분량 최대화 Rule-based 잔여 수량 추가 배분")
         step3_result = self._step3_remaining_allocation(
             data, SKUs, stores, target_stores, store_allocation_limits, 
             step2_result['allocation'], scenario_params

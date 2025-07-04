@@ -179,7 +179,6 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
                 print(f"   📦 Step3 - 잔여 수량 추가 배분:")
                 print(f"       추가 배분량: {step_analysis['step3']['additional_allocation']}개")
                 print(f"       소요 시간: {step_analysis['step3']['time']:.2f}초")
-                print(f"   ⏱️ 총 소요시간: {step_analysis['total_time']:.2f}초")
                 
                 # 배분 우선순위 설명
                 if 'priority_temperature' in scenario_params:
@@ -349,5 +348,5 @@ if __name__ == "__main__":
     # print("   배치 실험: run_batch_experiments(['DWLG42044'], ['baseline', 'balanced', 'random'])")
     print("   실험 목록: list_saved_experiments()")
     print("   다른 스타일: config.py에서 설정 변경 가능")
-    print("   사용 가능한 시나리오: deterministic, temperature_0.5, random, original_coverage, normalized_coverage")
-    print("   커버리지 비교 시나리오: original_coverage, normalized_coverage")
+    print("   사용 가능한 시나리오:\n      deterministic,\n      temperature_0.5,\n      random,\n      original_coverage,\n      normalized_coverage")
+    print("   커버리지 비교 시나리오:\n      original_coverage,\n      normalized_coverage")

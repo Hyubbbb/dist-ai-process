@@ -92,7 +92,43 @@ class ResultVisualizer:
             max_allocatable_qty = calculate_max_allocatable_by_tier(sku, target_stores, tier_system, A, QSUM)
             sku_labels.append(f"{color}-{size}\n({total_allocated}/{max_allocatable_qty})")
         
-        # 5. 히트맵 생성
+        # 5. 부가 통계 계산 (빈 셀, 컬러/사이즈 커버리지)
+
+        total_colors_style = df_sku_filtered['COLOR_CD'].nunique()
+        total_sizes_style = df_sku_filtered['SIZE_CD'].nunique()
+
+        empty_cells_counts = []
+        color_cov_ratios = []
+        size_cov_ratios = []
+
+        for row_idx, store in enumerate(selected_stores):
+            row_qties = matrix_data[row_idx]
+            # row_qties is a list here – use count(0) instead of numpy comparison
+            empty_cells_counts.append(row_qties.count(0))
+
+            # 색상/사이즈 커버리지
+            allocated_skus_row = [selected_skus[col_idx] for col_idx, qty in enumerate(row_qties) if qty > 0]
+            colors = set()
+            sizes = set()
+            for sku in allocated_skus_row:
+                try:
+                    sku_info = df_sku_filtered[df_sku_filtered['SKU'] == sku].iloc[0]
+                    colors.add(sku_info['COLOR_CD'])
+                    sizes.add(sku_info['SIZE_CD'])
+                except:
+                    parts = sku.split('_')
+                    if len(parts) >= 3:
+                        colors.add(parts[1])
+                        sizes.add(parts[2])
+
+            color_cov_ratios.append(len(colors)/total_colors_style if total_colors_style else 0)
+            size_cov_ratios.append(len(sizes)/total_sizes_style if total_sizes_style else 0)
+
+        avg_empty_cells = np.mean(empty_cells_counts) if empty_cells_counts else 0
+        avg_color_cov = np.mean(color_cov_ratios) if color_cov_ratios else 0
+        avg_size_cov = np.mean(size_cov_ratios) if size_cov_ratios else 0
+
+        # 6. 히트맵 생성
         matrix_data = np.array(matrix_data)
         vmax_val = fixed_max if fixed_max is not None else max(1, matrix_data.max())
         fig, ax = plt.subplots(figsize=(max(12, len(selected_skus)*0.8), max(8, len(selected_stores)*0.4)))
@@ -112,15 +148,40 @@ class ResultVisualizer:
                     text_color = 'white' if qty > matrix_data.max()*0.6 else 'black'
                     ax.text(j, i, str(int(qty)), ha='center', va='center', color=text_color, fontweight='bold', fontsize=8)
         
+        # ----- Right-side axis showing empty cell count per store -----
+        ax_right = ax.twinx()
+        ax_right.set_ylim(ax.get_ylim())
+        ax_right.set_yticks(np.arange(len(selected_stores)))
+        # 빈 셀 수가 0인 경우 라벨을 비워서 표시하지 않음
+        right_labels = [str(c) if c > 0 else '' for c in empty_cells_counts]
+        ax_right.set_yticklabels(right_labels, fontsize=9)
+        # 1 이상 값은 빨간 볼드체로 강조
+        for tick, cnt in zip(ax_right.get_yticklabels(), empty_cells_counts):
+            if cnt > 0:
+                tick.set_color('red')
+                tick.set_fontweight('bold')
+        ax_right.set_ylabel('Empty SKU Cells', fontsize=12)
+        ax_right.tick_params(axis='y', direction='in')
+
+        # Stats box (move to figure upper-right, above colorbar)
+        total_allocated = matrix_data.sum()
+        filled_combinations = np.count_nonzero(matrix_data)
+        stats_text = (
+            f"Total Allocated: {total_allocated:,}\n"
+            f"Filled Cells: {filled_combinations}\n"
+            f"Avg Empty Cells/store: {avg_empty_cells:.1f}\n"
+            f"Avg Color Coverage: {avg_color_cov:.2f}\n"
+            f"Avg Size Coverage:  {avg_size_cov:.2f}"
+        )
+
+        # Figure-level coordinates (transFigure) so it sits above the colorbar area
+        fig.text(0.98, 0.98, stats_text, transform=fig.transFigure,
+                 fontsize=11, ha='right', va='top',
+                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.85))
+        
         ax.set_title(f'SKU Allocation Matrix\n(Top {len(selected_stores)} Stores × Top {len(selected_skus)} SKUs)', fontsize=14, fontweight='bold', pad=20)
         ax.set_xlabel('SKU (Color-Size)', fontsize=12)
         ax.set_ylabel('Store ID (QTY_SUM)', fontsize=12)
-        
-        total_allocated = matrix_data.sum()
-        filled_combinations = np.count_nonzero(matrix_data)
-        stats_text = f"Total Allocated: {total_allocated:,}\nFilled Cells: {filled_combinations}" 
-        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=10,
-                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         
         plt.tight_layout()
         

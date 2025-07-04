@@ -95,7 +95,6 @@ class ExperimentManager:
     def _create_style_analysis_df(self, analysis_results):
         """스타일 분석 데이터프레임 생성"""
         style_coverage = analysis_results['style_coverage']
-        overall_eval = analysis_results['overall_evaluation']
         
         style_data = [{
             'Metric': 'Color Coverage',
@@ -109,13 +108,7 @@ class ExperimentManager:
             'Maximum': style_coverage['size_coverage']['max_ratio'],
             'Minimum': style_coverage['size_coverage']['min_ratio'],
             'Total_Count': style_coverage['size_coverage']['total_sizes']
-        }, {
-            'Metric': 'Overall Performance',
-            'Average': overall_eval['total_score'],
-            'Maximum': None,
-            'Minimum': None,
-            'Total_Count': None
-        }]
+        }   ]
         
         return pd.DataFrame(style_data)
     
@@ -140,8 +133,7 @@ class ExperimentManager:
             'scenario_name': scenario_name,
             'timestamp': datetime.now().isoformat(),
             'parameters': make_json_serializable(params),
-            'optimization_summary': make_json_serializable(optimization_summary),
-            'overall_evaluation': make_json_serializable(analysis_results.get('overall_evaluation', {})) if analysis_results else {}
+            'optimization_summary': make_json_serializable(optimization_summary)
         }
         
         with open(file_paths['experiment_params'], 'w', encoding='utf-8') as f:

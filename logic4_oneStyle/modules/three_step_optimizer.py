@@ -35,8 +35,6 @@ class ThreeStepOptimizer:
         self.step2_additional_allocation = 0
         self.step3_additional_allocation = 0
         
-        print(f"🎯 3-Step 최적화 시스템 초기화 (스타일: {target_style})")
-        
     def optimize_three_step(self, data, scarce_skus, abundant_skus, target_stores, 
                          store_allocation_limits, df_sku_filtered, tier_system, 
                          scenario_params):
@@ -49,8 +47,6 @@ class ThreeStepOptimizer:
         QSUM = data['QSUM']
         
         print(f"🎯 3-Step 최적화 시작 (스타일: {self.target_style})")
-        print(f"   전체 SKU: {len(SKUs)}개")
-        print(f"   대상 매장: {len(target_stores)}개")
         if 'priority_temperature' in scenario_params:
             print(f"   우선순위 temperature: {scenario_params['priority_temperature']}")
         
@@ -88,8 +84,8 @@ class ThreeStepOptimizer:
     
     def _step1_coverage_optimization(self, data, SKUs, stores, target_stores, 
                                     store_allocation_limits, df_sku_filtered, K_s, L_s, scenario_params):
-        """Step 1: 바이너리 커버리지 최적화"""
-        print(f"📊 Step 1: 바이너리 커버리지 최적화")
+        """Step 1: L1 커버리지 최적화"""
+        print(f"📊 Step 1: L1 커버리지 최적화")
         
         start_time = time.time()
         
@@ -114,7 +110,7 @@ class ThreeStepOptimizer:
                                    df_sku_filtered, K_s, L_s, data)
         
         # 5. 최적화 실행
-        print(f"   🔍 MILP 최적화 시작...")
+        # print(f"   🔍 MILP 최적화 시작...")
         self.step1_prob.solve(PULP_CBC_CMD(msg=0))
         
         end_time = time.time()
@@ -134,9 +130,9 @@ class ThreeStepOptimizer:
             # 목적함수 값 계산
             self.step1_objective = value(self.step1_prob.objective)
             
-            print(f"   📊 Step1 결과:")
-            print(f"      커버리지 점수: {self.step1_objective:.1f}")
-            print(f"      선택된 조합: {len(selected_combinations)}개")
+            # print(f"   📊 Step1 결과:")
+            # print(f"      커버리지 점수: {self.step1_objective:.1f}")
+            # print(f"      선택된 조합: {len(selected_combinations)}개")
             
             # Step1 배분 결과 생성
             step1_allocation = {}
@@ -163,7 +159,7 @@ class ThreeStepOptimizer:
     def _step2_single_allocation(self, data, SKUs, stores, target_stores, 
                                 store_allocation_limits, step1_allocation, scenario_params):
         """Step 2: 아직 해당 SKU를 받지 못한 매장에 1개씩만 배분"""
-        print("📦 Step 2: 미배분 매장 1개씩 배분")
+        # print("📦 Step 2: 미배분 매장 1개씩 배분")
         
         start_time = time.time()
         
@@ -239,7 +235,7 @@ class ThreeStepOptimizer:
     def _step3_remaining_allocation(self, data, SKUs, stores, target_stores, 
                                     store_allocation_limits, step2_allocation, scenario_params):
         """Step 3: 남은 재고를 우선순위에 따라 (Tier limit까지) 추가 배분"""
-        print("📦 Step 3: 잔여 수량 추가 배분")
+        # print("📦 Step 3: 잔여 수량 추가 배분")
         
         start_time = time.time()
         
@@ -349,7 +345,7 @@ class ThreeStepOptimizer:
 
     
     def _set_coverage_objective(self, color_coverage, size_coverage, stores, target_stores, K_s, L_s):
-        """정규화된 커버리지 목적함수 설정 (스타일별 색상/사이즈 개수 반영)"""
+        """L1 커버리지 목적함수 설정 (정규화 O: 스타일별 색상/사이즈 개수 반영)"""
         s = self.target_style
         
         # 스타일별 색상과 사이즈 개수 파악 (스타일마다 다름)
@@ -370,14 +366,14 @@ class ThreeStepOptimizer:
         
         self.step1_prob += normalized_coverage_sum
         
-        print(f"   🎯 목적함수: 정규화된 커버리지 최대화 (스타일별 색상/사이즈 개수 반영)")
-        print(f"      색상 가중치: {color_weight:.3f} (총 {total_colors}개 색상)")
-        print(f"      사이즈 가중치: {size_weight:.3f} (총 {total_sizes}개 사이즈)")
-        print(f"      → 각 색상 커버 = {color_weight:.3f}점, 각 사이즈 커버 = {size_weight:.3f}점")
-        print(f"      → 스타일 간 공정한 커버리지 비교 가능")
+        print(f"   🎯 목적함수: L1 커버리지 최대화 (정규화 O: 스타일별 색상/사이즈 개수 반영)")
+        # print(f"      색상 가중치: {color_weight:.3f} (총 {total_colors}개 색상)")
+        # print(f"      사이즈 가중치: {size_weight:.3f} (총 {total_sizes}개 사이즈)")
+        # print(f"      → 각 색상 커버 = {color_weight:.3f}점, 각 사이즈 커버 = {size_weight:.3f}점")
+        # print(f"      → 스타일 간 공정한 커버리지 비교 가능")
 
     def _set_coverage_objective_original(self, color_coverage, size_coverage, stores, target_stores):
-        """원래 커버리지 목적함수 설정 (스타일별 개수 차이 미반영)"""
+        """L1 커버리지 목적함수 설정 (정규화 X: 색상 + 사이즈 단순 합산)"""
         s = self.target_style
         
         # 색상 + 사이즈 커버리지 합계만 최대화 (원래 방식)
@@ -388,9 +384,9 @@ class ThreeStepOptimizer:
         
         self.step1_prob += coverage_sum
         
-        print(f"   🎯 목적함수: 원래 커버리지 최대화 (색상 + 사이즈 단순 합산)")
-        print(f"      ⚠️ 스타일별 색상/사이즈 개수 차이 미반영")
-        print(f"      ⚠️ 사이즈 개수가 많은 스타일이 더 높은 점수를 받음")
+        print(f"   🎯 목적함수: L1 커버리지 최대화 (정규화 X: 색상 + 사이즈 단순 합산)")
+        # print(f"      ⚠️ 스타일별 색상/사이즈 개수 차이 미반영")
+        # print(f"      ⚠️ 사이즈 개수가 많은 스타일이 더 높은 점수를 받음")
     
     def _add_step1_constraints(self, b, color_coverage, size_coverage, SKUs, stores, 
                               target_stores, store_allocation_limits, df_sku_filtered, 
@@ -492,7 +488,7 @@ class ThreeStepOptimizer:
         alpha = max(0.0, min(1.0, float(priority_temperature)))
         scores = self._compute_mixed_weights(target_stores, QSUM, alpha)
 
-        print(f"   🎲 배분 우선순위: mixed (temperature={alpha:.2f})")
+        print(f"   🎲 priority_temperature={alpha:.2f}")
         return scores
     
     def _compute_mixed_weights(self, target_stores, QSUM, alpha):

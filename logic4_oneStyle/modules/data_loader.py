@@ -19,7 +19,7 @@ class DataLoader:
         
     def load_data(self):
         """기본 데이터 로드"""
-        print("📊 데이터 로드 중...")
+        # print("📊 데이터 로드 중...")
         
         # SKU 데이터 로드
         sku_file = os.path.join(self.data_path, '발주수량.csv')

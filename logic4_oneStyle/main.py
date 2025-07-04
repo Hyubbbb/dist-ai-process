@@ -197,15 +197,6 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
         print("         🎉 3-Step 최적화 완료!")
         print("="*50)
         
-        overall_eval = analysis_results['overall_evaluation']
-        print(f"📊 최종 결과:")
-        print(f"   🎯 대상 스타일: {target_style}")
-        print(f"   🚀 3-Step 사용")
-        print(f"   📈 종합 등급: {overall_eval['grade']}")
-        print(f"   📊 종합 점수: {overall_eval['total_score']:.3f}")
-        print(f"   📁 결과 저장: {experiment_path}")
-        print(f"   📄 총 생성 파일: {len(file_paths)}개")
-        
         print(f"✅ 총 소요시간: {time.time() - start_time:.2f}초")
         return {
             'status': 'success',
@@ -352,19 +343,11 @@ if __name__ == "__main__":
     result = run_optimization(target_style='DWLG42044', 
                               scenario='deterministic')
     
-    # result = run_batch_experiments(['DWLG42044'], 
-    #                                ['baseline', 'balanced', 'random'])
-    
-    # 실험 목록 출력
-    # print("\n" + "="*50)
-    # list_saved_experiments()
-    
     # 사용법 안내
     print("\n💡 사용법:")
-    print("   단일 실험: run_optimization(target_style='DWLG42044', scenario='baseline')")
-    print("   배치 실험: run_batch_experiments(['DWLG42044'], ['baseline', 'balanced', 'random'])")
+    print("   단일 실험: run_optimization(target_style='DWLG42044', scenario='deterministic')")
+    # print("   배치 실험: run_batch_experiments(['DWLG42044'], ['baseline', 'balanced', 'random'])")
     print("   실험 목록: list_saved_experiments()")
     print("   다른 스타일: config.py에서 설정 변경 가능")
-    print("   사용 가능한 시나리오: baseline, balanced, random, high_coverage, my_custom, three_step_fair, three_step_performance")
+    print("   사용 가능한 시나리오: deterministic, temperature_0.5, random, original_coverage, normalized_coverage")
     print("   커버리지 비교 시나리오: original_coverage, normalized_coverage")
-    print("   커버리지 방식 비교: python compare_coverage_methods.py (스타일별 색상/사이즈 개수 반영)") 

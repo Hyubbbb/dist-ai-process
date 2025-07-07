@@ -15,35 +15,34 @@ class ExperimentManager:
     def __init__(self):
         self.output_path = OUTPUT_PATH
         
-    def create_experiment_output_path(self, scenario_name):
+    def create_experiment_output_path(self, scenario_name, style_name):
         """실험별 고유한 출력 폴더 및 파일명 생성"""
         
-        # 현재 시간 (YYYYMMDD_HHMMSS 형식)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # 현재 시간 (MMDD_HHMM 형식)
+        timestamp = datetime.now().strftime("%m%d_%H%M")
         
-        # 실험 폴더명: 시나리오_날짜시간
-        experiment_folder = f"{scenario_name}_{timestamp}"
-        
-        # 전체 경로
-        experiment_path = os.path.join(self.output_path, experiment_folder)
+        # 계층적 폴더 구조: 스타일명/시나리오명/일시
+        style_folder = os.path.join(self.output_path, style_name)
+        scenario_folder = os.path.join(style_folder, scenario_name)
+        experiment_folder = os.path.join(scenario_folder, timestamp)
         
         # 폴더 생성 (존재하지 않으면)
-        os.makedirs(experiment_path, exist_ok=True)
+        os.makedirs(experiment_folder, exist_ok=True)
         
-        # 파일명 패턴 생성
-        file_prefix = f"{scenario_name}_{timestamp}"
+        # 파일명 패턴 생성 (스타일명_시나리오명_일시)
+        file_prefix = f"{style_name}_{scenario_name}_{timestamp}"
         
         file_paths = {
-            'allocation_results': os.path.join(experiment_path, f"{file_prefix}_allocation_results.csv"),
-            'store_summary': os.path.join(experiment_path, f"{file_prefix}_store_summary.csv"),
-            'style_analysis': os.path.join(experiment_path, f"{file_prefix}_style_analysis.csv"),
-            'top_performers': os.path.join(experiment_path, f"{file_prefix}_top_performers.csv"),
-            'scarce_effectiveness': os.path.join(experiment_path, f"{file_prefix}_scarce_effectiveness.csv"),
-            'experiment_params': os.path.join(experiment_path, f"{file_prefix}_experiment_params.json"),
-            'experiment_summary': os.path.join(experiment_path, f"{file_prefix}_experiment_summary.txt")
+            'allocation_results': os.path.join(experiment_folder, f"{file_prefix}_allocation_results.csv"),
+            'store_summary': os.path.join(experiment_folder, f"{file_prefix}_store_summary.csv"),
+            'style_analysis': os.path.join(experiment_folder, f"{file_prefix}_style_analysis.csv"),
+            'top_performers': os.path.join(experiment_folder, f"{file_prefix}_top_performers.csv"),
+            'scarce_effectiveness': os.path.join(experiment_folder, f"{file_prefix}_scarce_effectiveness.csv"),
+            'experiment_params': os.path.join(experiment_folder, f"{file_prefix}_experiment_params.json"),
+            'experiment_summary': os.path.join(experiment_folder, f"{file_prefix}_experiment_summary.txt")
         }
         
-        return experiment_path, file_paths
+        return experiment_folder, file_paths
     
     def save_experiment_results(self, file_paths, df_results, analysis_results, params, 
                               scenario_name, optimization_summary):
@@ -197,70 +196,3 @@ class ExperimentManager:
 """
         
         return summary_text
-    
-    # def load_experiment_results(self, experiment_folder):
-    #     """저장된 실험 결과 로드"""
-    #     experiment_path = os.path.join(self.output_path, experiment_folder)
-        
-    #     if not os.path.exists(experiment_path):
-    #         raise ValueError(f"실험 폴더를 찾을 수 없습니다: {experiment_folder}")
-        
-    #     # 파일 경로 구성
-    #     files = os.listdir(experiment_path)
-    #     base_name = experiment_folder  # 폴더명이 곧 파일 prefix
-        
-    #     file_paths = {}
-    #     for file in files:
-    #         if file.endswith('_allocation_results.csv'):
-    #             file_paths['allocation_results'] = os.path.join(experiment_path, file)
-    #         elif file.endswith('_experiment_params.json'):
-    #             file_paths['experiment_params'] = os.path.join(experiment_path, file)
-    #         # ... 다른 파일들도 추가 가능
-        
-    #     # 결과 로드
-    #     results = {}
-        
-    #     if 'allocation_results' in file_paths:
-    #         results['allocation_results'] = pd.read_csv(file_paths['allocation_results'])
-        
-    #     if 'experiment_params' in file_paths:
-    #         with open(file_paths['experiment_params'], 'r', encoding='utf-8') as f:
-    #             results['experiment_params'] = json.load(f)
-        
-    #     return results
-    
-    # def list_experiments(self):
-    #     """저장된 실험 목록 반환"""
-    #     if not os.path.exists(self.output_path):
-    #         return []
-        
-    #     experiments = []
-    #     for folder in os.listdir(self.output_path):
-    #         folder_path = os.path.join(self.output_path, folder)
-    #         if os.path.isdir(folder_path):
-    #             # 폴더 정보 수집
-    #             experiment_info = {
-    #                 'folder_name': folder,
-    #                 'path': folder_path,
-    #                 'created_time': datetime.fromtimestamp(os.path.getctime(folder_path))
-    #             }
-                
-    #             # 파라미터 파일이 있으면 추가 정보 로드
-    #             param_files = [f for f in os.listdir(folder_path) if f.endswith('_experiment_params.json')]
-    #             if param_files:
-    #                 param_file = os.path.join(folder_path, param_files[0])
-    #                 try:
-    #                     with open(param_file, 'r', encoding='utf-8') as f:
-    #                         params = json.load(f)
-    #                         experiment_info['scenario_name'] = params.get('scenario_name', 'Unknown')
-    #                         experiment_info['target_style'] = params.get('parameters', {}).get('target_style', 'Unknown')
-    #                 except:
-    #                     experiment_info['scenario_name'] = 'Unknown'
-    #                     experiment_info['target_style'] = 'Unknown'
-                
-    #             experiments.append(experiment_info)
-        
-    #     # 생성 시간 순으로 정렬 (최신순)
-    #     experiments.sort(key=lambda x: x['created_time'], reverse=True)
-        
-    #     return experiments 

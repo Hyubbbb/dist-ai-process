@@ -15,7 +15,6 @@ from modules import (
 )
 from modules.three_step_optimizer import ThreeStepOptimizer
 from config import EXPERIMENT_SCENARIOS, DEFAULT_TARGET_STYLE, DEFAULT_SCENARIO
-from modules.objective_analyzer import ObjectiveAnalyzer
 
 
 def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARIO, 
@@ -101,13 +100,11 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
         scenario_params = EXPERIMENT_SCENARIOS[scenario].copy()
         scenario_params['target_style'] = target_style
         
-        # 시나리오 이름 생성 (스타일 포함)
-        scenario_name = f"{target_style}_{scenario}"
-        
-        # 출력 경로 생성
-        experiment_path, file_paths = experiment_manager.create_experiment_output_path(scenario_name)
+        # 출력 경로 생성 (시나리오명만 사용)
+        experiment_path, file_paths = experiment_manager.create_experiment_output_path(scenario, target_style)
         
         # 결과 저장
+        scenario_name = f"{target_style}_{scenario}"  # 저장용 시나리오명 (스타일 포함)
         experiment_manager.save_experiment_results(
             file_paths, df_results, analysis_results, scenario_params,
             scenario_name, allocation_summary
@@ -124,9 +121,9 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
                 visualization_dir = experiment_path
 
                 # Step별 allocation matrix 경로 (Step1/Step2/Step3)
-                matrix_step1_path = os.path.join(visualization_dir, f"{scenario_name}_step1_allocation_matrix.png")
-                matrix_step2_path = os.path.join(visualization_dir, f"{scenario_name}_step2_allocation_matrix.png")
-                matrix_step3_path = os.path.join(visualization_dir, f"{scenario_name}_step3_allocation_matrix.png")
+                matrix_step1_path = os.path.join(visualization_dir, f"{target_style}_{scenario}_step1_allocation_matrix.png")
+                matrix_step2_path = os.path.join(visualization_dir, f"{target_style}_{scenario}_step2_allocation_matrix.png")
+                matrix_step3_path = os.path.join(visualization_dir, f"{target_style}_{scenario}_step3_allocation_matrix.png")
 
                 # 배분 매트릭스 히트맵 (Step1, Step2, Step3) - 100개 매장 모두 표시
 
@@ -215,7 +212,7 @@ def run_optimization(target_style=DEFAULT_TARGET_STYLE, scenario=DEFAULT_SCENARI
         return None
 
 
-def run_batch_experiments(target_styles=None, scenarios=None, create_visualizations=False):
+def run_batch_experiments(target_styles=None, scenarios=None, create_visualizations=True):
     """
     배치 실험 실행
     
@@ -237,7 +234,6 @@ def run_batch_experiments(target_styles=None, scenarios=None, create_visualizati
     print(f"   총 실험 수: {len(target_styles) * len(scenarios)}개")
     
     results = []
-    objective_data = []  # 목적함수 분석용 데이터
     
     for target_style in target_styles:
         for scenario in scenarios:
@@ -256,22 +252,10 @@ def run_batch_experiments(target_styles=None, scenarios=None, create_visualizati
                 results.append(result)
                 print(f"✅ 완료: {target_style} - {scenario}")
                 
-                # 목적함수 분석용 데이터 준비
+                # 실험 완료 요약 출력
                 step_analysis = result.get('step_analysis', {})
                 if step_analysis:
-                    # 시나리오 파라미터 추출
-                    scenario_config = EXPERIMENT_SCENARIOS.get(scenario, {})
-                    
-                    objective_data.append({
-                        'scenario': f"{scenario}_{target_style}",
-                        'objective': step_analysis['step1']['objective'],  # Step1 커버리지만 사용
-                        'breakdown': step_analysis,
-                        'coverage_weight': scenario_config.get('coverage_weight', 1.0),
-                        'balance_penalty_weight': scenario_config.get('balance_penalty', 0.1),
-                        'experiment_result': result
-                    })
-                
-                print(f"   ✅ 실험 완료 - Step1 커버리지: {step_analysis['step1']['objective']:.1f}, Step2 추가배분: {step_analysis['step2']['additional_allocation']}개")
+                    print(f"   ✅ 실험 완료 - Step1 커버리지: {step_analysis['step1']['objective']:.1f}, Step2 추가배분: {step_analysis['step2']['additional_allocation']}개")
             else:
                 print(f"❌ 실패: {target_style} - {scenario}")
     
@@ -279,20 +263,7 @@ def run_batch_experiments(target_styles=None, scenarios=None, create_visualizati
     print(f"   성공한 실험: {len(results)}개")
     print(f"   실패한 실험: {len(target_styles) * len(scenarios) - len(results)}개")
     
-    # 개선된 목적함수 분석 수행
-    if len(objective_data) >= 2:
-        analyzer = ObjectiveAnalyzer()
-        analysis_results = analyzer.analyze_experiments(objective_data)
-        
-        if analysis_results:
-            print(f"\n🎉 개선된 목적함수 분석 완료!")
-            print(f"   📈 분해 분석 차트: {analysis_results['decomposition_chart']}")
-            print(f"   🔄 정규화 비교 차트: {analysis_results['normalized_chart']}")
-            if analysis_results['sensitivity_heatmap']:
-                print(f"   🔥 민감도 히트맵: {analysis_results['sensitivity_heatmap']}")
-            print(f"   📋 개선된 분석 리포트: {analysis_results['analysis_report']}")
-    else:
-        print(f"⚠️ 목적함수 분석을 위해서는 최소 2개의 성공한 실험이 필요합니다.")
+
     
     return results
 
@@ -331,7 +302,7 @@ if __name__ == "__main__":
     시나리오 종류
     deterministic: 결정론적 배분
 
-    temperature_0.5: temperature 0.5
+    temperature_50: temperature 0.5
 
     random: 랜덤 배분
 
@@ -339,14 +310,45 @@ if __name__ == "__main__":
 
     normalized_coverage: 정규화 커버리지 방식 테스트 (스타일별 색상/사이즈 개수 반영)
     """
-    result = run_optimization(target_style='DWLG42044', 
-                              scenario='deterministic')
+
+    """
+    스타일 종류
+
+    1. 대물량
+    DWDJ68046
+
+    2. 아더컬러 어려운거
+    DMDJ85046
+    DWDJ8P046
+    DXDJ8C046
+    DXMT33044
+
+    3. 소물량
+    DWLG42044
+    """
+
+    # (1) 단일 실험
+    # result = run_optimization(target_style='DWLG42044', 
+    #                         #   scenario='deterministic')
+    #                         #   scenario='temperature_50')
+    #                           scenario='random')
     
-    # 사용법 안내
-    print("\n💡 사용법:")
-    print("   단일 실험: run_optimization(target_style='DWLG42044', scenario='deterministic')")
-    # print("   배치 실험: run_batch_experiments(['DWLG42044'], ['baseline', 'balanced', 'random'])")
-    print("   실험 목록: list_saved_experiments()")
-    print("   다른 스타일: config.py에서 설정 변경 가능")
-    print("   사용 가능한 시나리오:\n      deterministic,\n      temperature_0.5,\n      random,\n      original_coverage,\n      normalized_coverage")
-    print("   커버리지 비교 시나리오:\n      original_coverage,\n      normalized_coverage")
+    # print("   단일 실험: run_optimization(target_style='DWLG42044', scenario='deterministic')")
+    # print("   단일 실험: run_optimization(target_style='DWLG42044', scenario='temperature_50')")
+    # print("   단일 실험: run_optimization(target_style='DWLG42044', scenario='random')")
+
+    # (2) 배치 실험
+    # run_batch_experiments(['DWLG42044'],
+    #                       ['deterministic', 'temperature_50', 'random'])
+    # print("   배치 실험: run_batch_experiments(['DWLG42044'], ['deterministic', 'temperature_50', 'random'])")
+    
+    run_batch_experiments(['DWDJ68046', 'DMDJ85046', 'DWDJ8P046', 'DXDJ8C046', 'DXMT33044', 'DWLG42044'],
+                          ['deterministic', 'temperature_50', 'random'])
+    print("   배치 실험: run_batch_experiments(['DWDJ68046', 'DMDJ85046', 'DWDJ8P046', 'DXDJ8C046', 'DXMT33044', 'DWLG42044'], ['deterministic', 'temperature_50', 'random', 'original_coverage', 'normalized_coverage'])")
+    
+
+    # (3) 실험 목록
+    # print("   실험 목록: list_saved_experiments()")
+    # print("   다른 스타일: config.py에서 설정 변경 가능")
+    # print("   사용 가능한 시나리오:\n      deterministic,\n      temperature_50,\n      random,\n      original_coverage,\n      normalized_coverage")
+    # print("   커버리지 비교 시나리오:\n      original_coverage,\n      normalized_coverage")

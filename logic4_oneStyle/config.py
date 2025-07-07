@@ -112,7 +112,7 @@ EXPERIMENT_SCENARIOS = {
         "coverage_method": "normalized"
     },
     
-    "temperature_0.5": {
+    "temperature_50": {
         "description": "temperature 0.5",
         "coverage_weight": 1.0,
         "priority_temperature": 0.5,
